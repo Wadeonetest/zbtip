@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>灞忓箷褰曞埗宸ュ叿</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f0f0f0;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .header {
+      background-color: #333;
+      color: white;
+      padding: 10px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      font-size: 18px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .btn-start {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .btn-pause {
+      background-color: #ff9800;
+      color: white;
+    }
+
+    .btn-stop {
+      background-color: #f44336;
+      color: white;
+    }
+
+    .btn-edit {
+      background-color: #2196F3;
+      color: white;
+    }
+
+    .main-content {
+      flex: 1;
+      display: flex;
+      padding: 20px;
+      gap: 20px;
+    }
+
+    .left-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .recording-area {
+      background-color: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .video-preview {
+      width: 100%;
+      height: 400px;
+      background-color: #000;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .video-element {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .progress-container {
+      margin-top: 20px;
+      position: relative;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background-color: #e0e0e0;
+      border-radius: 4px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background-color: #4CAF50;
+      border-radius: 4px;
+      width: 0%;
+    }
+
+    .marker {
+      position: absolute;
+      top: -6px;
+      width: 20px;
+      height: 20px;
+      background-color: #ffeb3b;
+      border-radius: 50%;
+      cursor: pointer;
+      transform: translateX(-50%);
+      z-index: 10;
+    }
+
+    .marker:hover {
+      background-color: #ffc107;
+    }
+
+    .marker-label {
+      position: absolute;
+      top: -30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0,0,0,0.7);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      display: none;
+    }
+
+    .marker:hover .marker-label {
+      display: block;
+    }
+
+    .right-panel {
+      width: 300px;
+      background-color: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow-y: auto;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .clip-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .clip-item {
+      background-color: #f9f9f9;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 10px;
+    }
+
+    .clip-info {
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
+
+    .clip-buttons {
+      display: flex;
+      gap: 5px;
+      margin-top: 10px;
+    }
+
+    .btn-small {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .notification {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background-color: rgba(0,0,0,0.8);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .notification.show {
+      opacity: 1;
+    }
+
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 2000;
+      display: none;
+    }
+
+    .modal.show {
+      display: flex;
+    }
+
+    .modal-content {
+      background-color: white;
+      border-radius: 8px;
+      padding: 20px;
+      width: 400px;
+      max-width: 90%;
+    }
+
+    .modal h2 {
+      font-size: 18px;
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .form-group textarea {
+      height: 80px;
+      resize: vertical;
+    }
+
+    .modal-buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .btn-cancel {
+      background-color: #9e9e9e;
+      color: white;
+    }
+
+    .btn-save {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .area-selection {
+      margin-top: 10px;
+      padding: 10px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+    }
+
+    .area-selection label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+
+    .area-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .input-group label {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .input-group input {
+      padding: 4px 8px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>灞忓箷褰曞埗宸ュ叿</h1>
+      <div class="controls">
+        <button class="btn btn-start" id="startRecord">寮€濮嬪綍灞?/button>
+        <button class="btn btn-pause" id="pauseRecord" disabled>鏆傚仠褰曞睆</button>
+        <button class="btn btn-stop" id="stopRecord" disabled>缁撴潫褰曞睆</button>
+        <button class="btn btn-edit" id="markProgress">鏍囪杩涘害</button>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="left-panel">
+        <div class="recording-area">
+          <div class="area-selection">
+            <label>褰曞睆鍖哄煙璁剧疆锛堥粯璁わ細鎶栭煶web绔洿鎾ぇ灏忥級</label>
+            <div class="area-inputs">
+              <div class="input-group">
+                <label>X鍧愭爣</label>
+                <input type="number" id="xCoord" value="0">
+              </div>
+              <div class="input-group">
+                <label>Y鍧愭爣</label>
+                <input type="number" id="yCoord" value="0">
+              </div>
+              <div class="input-group">
+                <label>瀹藉害</label>
+                <input type="number" id="width" value="1080">
+              </div>
+              <div class="input-group">
+                <label>楂樺害</label>
+                <input type="number" id="height" value="608">
+              </div>
+            </div>
+          </div>
+          <div class="video-preview">
+            <video class="video-element" id="videoPlayer" controls></video>
+          </div>
+          <div class="progress-container">
+            <div class="progress-bar" id="progressBar">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="right-panel">
+        <h3 class="panel-title">瑙嗛鐗囨</h3>
+        <div class="clip-list" id="clipList">
+          <!-- 瑙嗛鐗囨灏嗗湪杩欓噷鍔ㄦ€佹坊鍔?-->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notification" id="notification">
+    <span id="notificationText">宸插畬鎴愭爣璁帮細1</span>
+    <button class="btn btn-edit btn-small" id="editMarkerBtn">缂栬緫</button>
+  </div>
+
+  <div class="modal" id="markerModal">
+    <div class="modal-content">
+      <h2>缂栬緫鏍囪</h2>
+      <div class="form-group">
+        <label>鏍囪鍚嶇О</label>
+        <input type="text" id="markerName" placeholder="杈撳叆鏍囪鍚嶇О">
+      </div>
+      <div class="form-group">
+        <label>澶囨敞</label>
+        <textarea id="markerNote" placeholder="杈撳叆澶囨敞淇℃伅"></textarea>
+      </div>
+      <div class="modal-buttons">
+        <button class="btn btn-cancel" id="cancelEdit">鍙栨秷</button>
+        <button class="btn btn-save" id="saveEdit">淇濆瓨</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 鍏ㄥ眬鍙橀噺
+    let recorder = null;
+    let recording = false;
+    let paused = false;
+    let videoFile = null;
+    let markers = [];
+    let markerCount = 0;
+    let clips = [];
+    let clipStart = null;
+    let videoDuration = 0;
+
+    // DOM 鍏冪礌
+    const startRecordBtn = document.getElementById('startRecord');
+    const pauseRecordBtn = document.getElementById('pauseRecord');
+    const stopRecordBtn = document.getElementById('stopRecord');
+    const markProgressBtn = document.getElementById('markProgress');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const clipList = document.getElementById('clipList');
+    const notification = document.getElementById('notification');
+    const notificationText = document.getElementById('notificationText');
+    const editMarkerBtn = document.getElementById('editMarkerBtn');
+    const markerModal = document.getElementById('markerModal');
+    const markerName = document.getElementById('markerName');
+    const markerNote = document.getElementById('markerNote');
+    const cancelEdit = document.getElementById('cancelEdit');
+    const saveEdit = document.getElementById('saveEdit');
+    const xCoord = document.getElementById('xCoord');
+    const yCoord = document.getElementById('yCoord');
+    const width = document.getElementById('width');
+    const height = document.getElementById('height');
+
+    // 褰撳墠缂栬緫鐨勬爣璁扮储寮?    let currentMarkerIndex = -1;
+
+    // 鍒濆鍖?    function init() {
+      // 缁戝畾浜嬩欢
+      startRecordBtn.addEventListener('click', startRecording);
+      pauseRecordBtn.addEventListener('click', pauseRecording);
+      stopRecordBtn.addEventListener('click', stopRecording);
+      markProgressBtn.addEventListener('click', markProgress);
+      videoPlayer.addEventListener('timeupdate', updateProgress);
+      progressBar.addEventListener('click', seekVideo);
+      editMarkerBtn.addEventListener('click', openMarkerEdit);
+      cancelEdit.addEventListener('click', closeMarkerEdit);
+      saveEdit.addEventListener('click', saveMarkerEdit);
+      videoPlayer.addEventListener('loadedmetadata', () => {
+        videoDuration = videoPlayer.duration;
+      });
+
+      // 鍒濆鍖栬棰戠墖娈电偣鍑讳簨浠讹紙鐢ㄤ簬鎴彇瑙嗛锛?      progressBar.addEventListener('click', (e) => {
+        if (videoFile) {
+          handleClipSelection(e);
+        }
+      });
+    }
+
+    // 寮€濮嬪綍灞?    async function startRecording() {
+      try {
+        const { screen, desktopCapturer, remote } = require('electron');
+        const { writeFile } = require('fs');
+        const { dialog } = remote;
+
+        // 鑾峰彇褰曞睆鍖哄煙
+        const x = parseInt(xCoord.value) || 0;
+        const y = parseInt(yCoord.value) || 0;
+        const w = parseInt(width.value) || 1080;
+        const h = parseInt(height.value) || 608;
+
+        // 鑾峰彇灞忓箷娴?        const sources = await desktopCapturer.getSources({ types: ['screen'] });
+        const screenSource = sources[0];
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: screenSource.id,
+              minWidth: w,
+              maxWidth: w,
+              minHeight: h,
+              maxHeight: h,
+              minFrameRate: 30,
+              maxFrameRate: 30
+            }
+          }
+        });
+
+        // 鍒涘缓褰曞埗鍣?        recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        const chunks = [];
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            chunks.push(e.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const buffer = Buffer.from(await blob.arrayBuffer());
+
+          dialog.showSaveDialog({
+            defaultPath: `recording-${Date.now()}.webm`,
+            filters: [{ name: 'WebM Video', extensions: ['webm'] }]
+          }).then((result) => {
+            if (!result.canceled && result.filePath) {
+              writeFile(result.filePath, buffer, (err) => {
+                if (err) {
+                  console.error('淇濆瓨瑙嗛澶辫触:', err);
+                } else {
+                  videoFile = result.filePath;
+                  videoPlayer.src = videoFile;
+                  markers = [];
+                  markerCount = 0;
+                  clips = [];
+                  clipStart = null;
+                  updateMarkers();
+                  updateClips();
+                }
+              });
+            }
+          });
+
+          // 鍋滄鎵€鏈夎建閬?          stream.getTracks().forEach(track => track.stop());
+        };
+
+        // 寮€濮嬪綍鍒?        recorder.start();
+        recording = true;
+        paused = false;
+
+        // 鏇存柊鎸夐挳鐘舵€?        startRecordBtn.disabled = true;
+        pauseRecordBtn.disabled = false;
+        stopRecordBtn.disabled = false;
+        markProgressBtn.disabled = false;
+
+        console.log('寮€濮嬪綍灞?);
+      } catch (error) {
+        console.error('寮€濮嬪綍灞忓け璐?', error);
+      }
+    }
+
+    // 鏆傚仠褰曞睆
+    function pauseRecording() {
+      if (recorder && recording) {
+        if (paused) {
+          recorder.resume();
+          pauseRecordBtn.textContent = '鏆傚仠褰曞睆';
+        } else {
+          recorder.pause();
+          pauseRecordBtn.textContent = '缁х画褰曞睆';
+        }
+        paused = !paused;
+      }
+    }
+
+    // 缁撴潫褰曞睆
+    function stopRecording() {
+      if (recorder && recording) {
+        recorder.stop();
+        recording = false;
+
+        // 鏇存柊鎸夐挳鐘舵€?        startRecordBtn.disabled = false;
+        pauseRecordBtn.disabled = true;
+        stopRecordBtn.disabled = true;
+        pauseRecordBtn.textContent = '鏆傚仠褰曞睆';
+
+        console.log('缁撴潫褰曞睆');
+      }
+    }
+
+    // 鏍囪杩涘害
+    function markProgress() {
+      if (recording || videoFile) {
+        const currentTime = videoFile ? videoPlayer.currentTime : Date.now();
+        const marker = {
+          id: markerCount + 1,
+          name: (markerCount + 1).toString(),
+          time: currentTime,
+          note: ''
+        };
+
+        markers.push(marker);
+        markerCount++;
+        updateMarkers();
+
+        // 鏄剧ず閫氱煡
+        showNotification(`宸插畬鎴愭爣璁帮細${markerCount}`);
+      }
+    }
+
+    // 鏇存柊鏍囪
+    function updateMarkers() {
+      // 娓呴櫎鐜版湁鏍囪
+      const existingMarkers = document.querySelectorAll('.marker');
+      existingMarkers.forEach(marker => marker.remove());
+
+      // 娣诲姞鏂版爣璁?      markers.forEach((marker, index) => {
+        const markerElement = document.createElement('div');
+        markerElement.className = 'marker';
+        
+        // 璁＄畻鏍囪浣嶇疆
+        let position;
+        if (videoFile && videoDuration > 0) {
+          position = (marker.time / videoDuration) * 100;
+        } else {
+          // 褰曞埗涓紝浣跨敤鐩稿鏃堕棿
+          position = 0; // 绠€鍖栧鐞嗭紝瀹為檯搴旂敤涓渶瑕佽绠楃浉瀵逛綅缃?        }
+
+        markerElement.style.left = `${position}%`;
+        
+        // 娣诲姞鏍囪鏍囩
+        const labelElement = document.createElement('div');
+        labelElement.className = 'marker-label';
+        labelElement.textContent = marker.name;
+        markerElement.appendChild(labelElement);
+
+        // 娣诲姞鐐瑰嚮浜嬩欢
+        markerElement.addEventListener('click', () => {
+          if (videoFile) {
+            videoPlayer.currentTime = marker.time;
+            currentMarkerIndex = index;
+          }
+        });
+
+        progressBar.appendChild(markerElement);
+      });
+    }
+
+    // 鏇存柊杩涘害鏉?    function updateProgress() {
+      if (videoFile && videoDuration > 0) {
+        const progress = (videoPlayer.currentTime / videoDuration) * 100;
+        progressFill.style.width = `${progress}%`;
+      }
+    }
+
+    // 瑙嗛璺宠浆
+    function seekVideo(e) {
+      if (videoFile && videoDuration > 0) {
+        const rect = progressBar.getBoundingClientRect();
+        const pos = (e.clientX - rect.left) / rect.width;
+        const time = pos * videoDuration;
+        videoPlayer.currentTime = time;
+      }
+    }
+
+    // 澶勭悊瑙嗛鎴彇閫夋嫨
+    function handleClipSelection(e) {
+      if (videoFile) {
+        const rect = progressBar.getBoundingClientRect();
+        const pos = (e.clientX - rect.left) / rect.width;
+        const time = pos * videoDuration;
+
+        if (clipStart === null) {
+          // 寮€濮嬫埅鍙?          clipStart = time;
+        } else {
+          // 缁撴潫鎴彇
+          const clipEnd = time;
+          if (clipStart < clipEnd) {
+            const clip = {
+              id: clips.length + 1,
+              start: clipStart,
+              end: clipEnd,
+              duration: clipEnd - clipStart
+            };
+            clips.push(clip);
+            updateClips();
+          }
+          clipStart = null;
+        }
+      }
+    }
+
+    // 鏇存柊瑙嗛鐗囨鍒楄〃
+    function updateClips() {
+      clipList.innerHTML = '';
+
+      clips.forEach(clip => {
+        const clipItem = document.createElement('div');
+        clipItem.className = 'clip-item';
+        clipItem.innerHTML = `
+          <div class="clip-info">鐗囨 ${clip.id}</div>
+          <div class="clip-info">寮€濮? ${formatTime(clip.start)}</div>
+          <div class="clip-info">缁撴潫: ${formatTime(clip.end)}</div>
+          <div class="clip-info">鏃堕暱: ${formatTime(clip.duration)}</div>
+          <div class="clip-buttons">
+            <button class="btn btn-small btn-edit">鎾斁</button>
+            <button class="btn btn-small btn-stop">鍒犻櫎</button>
+          </div>
+        `;
+        clipList.appendChild(clipItem);
+      });
+
+      // 缁戝畾鎸夐挳浜嬩欢
+      const playButtons = clipList.querySelectorAll('.btn-edit');
+      const deleteButtons = clipList.querySelectorAll('.btn-stop');
+
+      playButtons.forEach((button, index) => {
+        button.addEventListener('click', () => {
+          const clip = clips[index];
+          videoPlayer.currentTime = clip.start;
+          videoPlayer.play();
+        });
+      });
+
+      deleteButtons.forEach((button, index) => {
+        button.addEventListener('click', () => {
+          clips.splice(index, 1);
+          updateClips();
+        });
+      });
+    }
+
+    // 鏄剧ず閫氱煡
+    function showNotification(message) {
+      notificationText.textContent = message;
+      notification.classList.add('show');
+
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 3000);
+    }
+
+    // 鎵撳紑鏍囪缂栬緫寮圭獥
+    function openMarkerEdit() {
+      if (markers.length > 0) {
+        const lastMarker = markers[markers.length - 1];
+        currentMarkerIndex = markers.length - 1;
+        markerName.value = lastMarker.name;
+        markerNote.value = lastMarker.note;
+        markerModal.classList.add('show');
+      }
+    }
+
+    // 鍏抽棴鏍囪缂栬緫寮圭獥
+    function closeMarkerEdit() {
+      markerModal.classList.remove('show');
+      currentMarkerIndex = -1;
+    }
+
+    // 淇濆瓨鏍囪缂栬緫
+    function saveMarkerEdit() {
+      if (currentMarkerIndex >= 0 && currentMarkerIndex < markers.length) {
+        markers[currentMarkerIndex].name = markerName.value || markers[currentMarkerIndex].name;
+        markers[currentMarkerIndex].note = markerNote.value;
+        updateMarkers();
+        closeMarkerEdit();
+      }
+    }
+
+    // 鏍煎紡鍖栨椂闂?    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    // 鍒濆鍖栧簲鐢?    init();
+  </script>
+</body>
+</html>
