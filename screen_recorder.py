@@ -30,8 +30,8 @@ class ScreenRecorder:
         self.recorded_frames = 0
         self.x = 0
         self.y = 0
-        self.width = 1080
-        self.height = 608
+        self.width = 1920
+        self.height = 1080
         self.recording_start_time = 0
         self.dragging = False
         self.drag_start_x = 0
@@ -55,135 +55,277 @@ class ScreenRecorder:
         self.dragging_clip_start = False
         self.dragging_clip_end = False
         
+        # 缩略功能区相关属性
+        self.mini_window = None
+        self.mini_pause_btn = None
+        self.mini_stop_btn = None
+        self.mini_mark_btn = None
+        self.mini_status_label = None
+
         self.create_ui()
     
     def create_ui(self):
-        self.control_frame = ttk.Frame(self.root, padding=10)
+        # 设置现代主题 - 剪映专业风格
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        
+        # 主色调定义 - 剪映专业级深色主题
+        self.bg_color = "#0d0d0d"           # 深黑色背景
+        self.card_bg = "#1a1a1a"            # 卡片背景
+        self.light_bg = "#252525"           # 浅色背景
+        self.text_color = "#ffffff"         # 白色文字
+        self.secondary_text = "#999999"     # 次要文字
+        self.accent_color = "#ff6c37"       # 橙红色强调色（剪映主题色）
+        self.accent_hover = "#ff8560"       # 悬停色
+        self.success_color = "#4CAF50"      # 成功色
+        self.danger_color = "#f44336"       # 危险色
+        self.border_color = "#333333"       # 边框色
+        self.input_bg = "#2d2d2d"           # 输入框背景
+        
+        # 配置主窗口
+        self.root.configure(bg=self.bg_color)
+        self.root.option_add('*Font', 'Arial 9')
+        
+        # 配置样式
+        # 框架样式
+        self.style.configure('Custom.TFrame', background=self.bg_color)
+        self.style.configure('Card.TFrame', background=self.card_bg)
+        self.style.configure('Light.TFrame', background=self.light_bg)
+        
+        # LabelFrame样式
+        self.style.configure('Custom.TLabelframe', background=self.card_bg,
+                           borderwidth=0, relief='flat')
+        self.style.configure('Custom.TLabelframe.Label', background=self.card_bg,
+                           foreground=self.secondary_text)
+        
+        # Label样式
+        self.style.configure('Custom.TLabel', background=self.bg_color,
+                          foreground=self.text_color)
+        self.style.configure('Title.TLabel', background=self.card_bg,
+                          foreground=self.text_color)
+        self.style.configure('Small.TLabel', background=self.card_bg,
+                          foreground=self.secondary_text)
+        
+        # 按钮基础样式
+        self.style.configure('Custom.TButton',
+                          background=self.light_bg,
+                          foreground=self.text_color,
+                          font=('Arial', 9, 'bold'),
+                          padding=(16, 8),
+                          borderwidth=0,
+                          relief='flat',
+                          focuscolor='none')
+        self.style.map('Custom.TButton',
+                    background=[('active', '#303030'), ('pressed', '#202020')],
+                    foreground=[('active', self.text_color)])
+        
+        # 强调按钮样式
+        self.style.configure('Accent.TButton',
+                          background=self.accent_color,
+                          foreground='#ffffff',
+                          font=('Arial', 9, 'bold'),
+                          padding=(16, 8),
+                          borderwidth=0,
+                          relief='flat',
+                          focuscolor='none')
+        self.style.map('Accent.TButton',
+                    background=[('active', self.accent_hover), ('pressed', '#e55b2d')],
+                    foreground=[('active', '#ffffff')])
+        
+        # 危险按钮样式
+        self.style.configure('Danger.TButton',
+                          background=self.danger_color,
+                          foreground='#ffffff',
+                          font=('Arial', 9, 'bold'),
+                          padding=(16, 8),
+                          borderwidth=0,
+                          relief='flat',
+                          focuscolor='none')
+        self.style.map('Danger.TButton',
+                    background=[('active', '#ff6060'), ('pressed', '#d32f2f')],
+                    foreground=[('active', '#ffffff')])
+        
+        # 输入框样式
+        self.style.configure('Custom.TEntry',
+                          fieldbackground=self.input_bg,
+                          foreground=self.text_color,
+                          background=self.light_bg,
+                          borderwidth=1,
+                          relief='solid',
+                          padding=4)
+        self.style.map('Custom.TEntry',
+                    fieldbackground=[('focus', '#303030')])
+        
+        # 控制栏 - 使用卡片式设计
+        self.control_frame = tk.Frame(self.root, bg=self.card_bg, padx=20, pady=16)
         self.control_frame.pack(fill=tk.X, side=tk.TOP)
-        ttk.Label(self.control_frame, text="屏幕录制工具", font=('Arial', 16, 'bold')).pack(side=tk.LEFT)
-        self.button_frame = ttk.Frame(self.control_frame)
+        
+        tk.Label(self.control_frame, text="屏幕录制工具", 
+                font=('Arial', 16, 'bold'),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        self.button_frame = tk.Frame(self.control_frame, bg=self.card_bg)
         self.button_frame.pack(side=tk.RIGHT)
-        self.start_btn = ttk.Button(self.button_frame, text="开始录屏", command=self.start_recording)
-        self.start_btn = ttk.Button(self.button_frame, text="开始录屏", command=self.start_recording)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-        self.pause_btn = ttk.Button(self.button_frame, text="暂停录屏", command=self.pause_recording, state=tk.DISABLED)
-        self.pause_btn.pack(side=tk.LEFT, padx=5)
-        self.stop_btn = ttk.Button(self.button_frame, text="结束录屏", command=self.stop_recording, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
-        self.mark_btn = ttk.Button(self.button_frame, text="标记进度", command=self.mark_progress, state=tk.DISABLED)
-        self.mark_btn.pack(side=tk.LEFT, padx=5)
         
-        self.clip_btn = ttk.Button(self.button_frame, text="截取视频", command=self.start_clip, state=tk.DISABLED)
-        self.clip_btn.pack(side=tk.LEFT, padx=5)
+        # 主按钮 - 使用不同样式区分功能
+        self.start_btn = ttk.Button(self.button_frame, text="开始录屏", command=self.start_recording, 
+                                  style='Accent.TButton')
+        self.start_btn.pack(side=tk.LEFT, padx=6, pady=2)
         
-        self.finish_clip_btn = ttk.Button(self.button_frame, text="完成截取", command=self.finish_clip, state=tk.DISABLED)
-        self.finish_clip_btn.pack(side=tk.LEFT, padx=5)
-        self.main_frame = ttk.Frame(self.root, padding=10)
+        self.pause_btn = ttk.Button(self.button_frame, text="暂停录屏", command=self.pause_recording, 
+                                  state=tk.DISABLED, style='Custom.TButton')
+        self.pause_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        
+        self.stop_btn = ttk.Button(self.button_frame, text="结束录屏", command=self.stop_recording, 
+                                  state=tk.DISABLED, style='Danger.TButton')
+        self.stop_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        
+        self.mark_btn = ttk.Button(self.button_frame, text="标记进度", command=self.mark_progress, 
+                                  state=tk.DISABLED, style='Custom.TButton')
+        self.mark_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        
+        self.clip_btn = ttk.Button(self.button_frame, text="截取视频", command=self.start_clip, 
+                                  state=tk.DISABLED, style='Custom.TButton')
+        self.clip_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        
+        self.finish_clip_btn = ttk.Button(self.button_frame, text="完成截取", command=self.finish_clip, 
+                                         state=tk.DISABLED, style='Accent.TButton')
+        self.finish_clip_btn.pack(side=tk.LEFT, padx=6, pady=2)
+
+        # 主框架
+        self.main_frame = tk.Frame(self.root, bg=self.bg_color)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
-        self.left_frame = ttk.Frame(self.main_frame)
-        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
-        self.area_frame = ttk.LabelFrame(self.left_frame, text="录屏区域设置", padding=10)
-        self.area_frame.pack(fill=tk.X, padx=5, pady=5)
-        area_grid = ttk.Frame(self.area_frame)
-        area_grid.pack(fill=tk.X)
-        ttk.Label(area_grid, text="X坐标:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        self.x_entry = ttk.Entry(area_grid, width=10)
-        self.x_entry.insert(0, "0")
-        self.x_entry.grid(row=0, column=1, padx=5, pady=5)
-        ttk.Label(area_grid, text="Y坐标:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
-        self.y_entry = ttk.Entry(area_grid, width=10)
-        self.y_entry.insert(0, "0")
-        self.y_entry.grid(row=0, column=3, padx=5, pady=5)
-        ttk.Label(area_grid, text="宽度:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        self.width_entry = ttk.Entry(area_grid, width=10)
-        self.width_entry.insert(0, "1080")
-        self.width_entry.grid(row=1, column=1, padx=5, pady=5)
-        ttk.Label(area_grid, text="高度:").grid(row=1, column=2, padx=5, pady=5, sticky=tk.W)
-        self.height_entry = ttk.Entry(area_grid, width=10)
-        self.height_entry.insert(0, "608")
-        self.height_entry.grid(row=1, column=3, padx=5, pady=5)
-        ttk.Button(area_grid, text="拖拽选择区域", command=self.start_drag_selection).grid(row=2, column=0, columnspan=4, pady=10)
-        self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=10)
-        self.video_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.canvas = tk.Canvas(self.video_frame, bg="black")
+        
+        # 左侧框架
+        self.left_frame = tk.Frame(self.main_frame, bg=self.bg_color)
+        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        # 视频预览 - 卡片式设计
+        self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=12, style='Custom.TLabelframe')
+        self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
+        
+        # 视频画布 - 圆角边框效果
+        self.canvas = tk.Canvas(self.video_frame, bg="#0a0a0a", 
+                              highlightthickness=1, highlightbackground="#2a2a2a")
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        video_controls = ttk.Frame(self.video_frame, padding=5)
-        video_controls.pack(fill=tk.X, pady=5)
-        self.play_btn = ttk.Button(video_controls, text="播放", command=self.play_video, state=tk.DISABLED)
-        self.play_btn.pack(side=tk.LEFT, padx=5)
-        self.pause_video_btn = ttk.Button(video_controls, text="暂停", command=self.pause_video, state=tk.DISABLED)
-        self.pause_video_btn.pack(side=tk.LEFT, padx=5)
-        self.progress_frame = ttk.Frame(self.left_frame, padding=10)
-        self.progress_frame.pack(fill=tk.X, padx=5, pady=5)
-        self.progress_canvas = tk.Canvas(self.progress_frame, height=40, bg="#333", cursor="hand1")
-        self.progress_canvas.pack(fill=tk.X, padx=5)
+        
+        # 视频控制栏
+        video_controls = tk.Frame(self.video_frame, bg=self.card_bg)
+        video_controls.pack(fill=tk.X, pady=(10, 0))
+        
+        self.play_btn = ttk.Button(video_controls, text="播放", command=self.play_video, 
+                                  state=tk.DISABLED, style='Custom.TButton')
+        self.play_btn.pack(side=tk.LEFT, padx=(0, 8))
+        
+        self.pause_video_btn = ttk.Button(video_controls, text="暂停", command=self.pause_video, 
+                                        state=tk.DISABLED, style='Custom.TButton')
+        self.pause_video_btn.pack(side=tk.LEFT)
+        
+        # 进度条区域 - 卡片式设计
+        self.progress_frame = ttk.LabelFrame(self.left_frame, text="进度", padding=12, style='Custom.TLabelframe')
+        self.progress_frame.pack(fill=tk.X)
+        
+        # 进度画布
+        self.progress_canvas = tk.Canvas(self.progress_frame, height=120, bg="#151515", 
+                                      cursor="hand1", highlightthickness=1, 
+                                      highlightbackground="#2a2a2a")
+        self.progress_canvas.pack(fill=tk.X, pady=(8, 0))
         self.progress_canvas.bind('<Button-1>', self.on_progress_click)
         self.progress_canvas.bind('<B1-Motion>', self.on_progress_drag)
         self.progress_canvas.bind('<ButtonRelease-1>', self.on_progress_release)
-        self.time_label = ttk.Label(self.progress_frame, text="00:00 / 00:00")
-        self.time_label.pack(side=tk.RIGHT, padx=5)
-        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=10)
-        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
-        self.clip_listbox = tk.Listbox(self.right_frame, height=20)
-        self.clip_listbox.pack(fill=tk.BOTH, expand=True)
-        clip_buttons = ttk.Frame(self.right_frame)
-        clip_buttons.pack(fill=tk.X, pady=10)
-        ttk.Button(clip_buttons, text="播放选中片段", command=self.play_selected_clip).pack(side=tk.LEFT, padx=5)
-        ttk.Button(clip_buttons, text="删除选中片段", command=self.delete_selected_clip).pack(side=tk.LEFT, padx=5)
+        
+        # 时间标签
+        self.time_label = tk.Label(self.progress_frame, text="00:00 / 00:00", 
+                                  font=('Arial', 9),
+                                  bg=self.card_bg, fg=self.secondary_text)
+        self.time_label.pack(side=tk.RIGHT, pady=(8, 0))
+        # 右侧视频片段面板 - 卡片式设计
+        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=12, style='Custom.TLabelframe')
+        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=0)
+        self.right_frame.configure(width=300)
+        
+        # 片段列表
+        self.clip_listbox = tk.Listbox(self.right_frame, 
+                                     height=20, 
+                                     bg="#151515", 
+                                     fg=self.text_color, 
+                                     highlightthickness=1, 
+                                     highlightbackground="#2a2a2a",
+                                     selectbackground=self.accent_color,
+                                     selectforeground="white",
+                                     font=('Arial', 9),
+                                     bd=0, relief='flat',
+                                     activestyle='none')
+        self.clip_listbox.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        
+        # 片段控制按钮
+        clip_buttons = tk.Frame(self.right_frame, bg=self.card_bg)
+        clip_buttons.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Button(clip_buttons, text="播放选中", command=self.play_selected_clip, 
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(clip_buttons, text="删除片段", command=self.delete_selected_clip, 
+                  style='Danger.TButton').pack(side=tk.LEFT)
+        # 通知窗口
         self.notification = tk.Toplevel(self.root)
         self.notification.title("通知")
-        self.notification.geometry("300x100")
+        self.notification.geometry("300x110")
         self.notification.transient(self.root)
         self.notification.withdraw()
-        self.notification_label = ttk.Label(self.notification, text="")
-        self.notification_label.pack(pady=10)
-        notification_buttons = ttk.Frame(self.notification)
-        notification_buttons.pack(pady=10)
-        ttk.Button(notification_buttons, text="编辑", command=self.open_marker_edit).pack(side=tk.LEFT, padx=5)
-        ttk.Button(notification_buttons, text="确定", command=self.notification.withdraw).pack(side=tk.LEFT, padx=5)
+        self.notification.configure(bg=self.card_bg)
+        
+        self.notification_label = tk.Label(self.notification, text="", 
+                                         font=('Arial', 10),
+                                         bg=self.card_bg, fg=self.text_color)
+        self.notification_label.pack(pady=18)
+        
+        notification_buttons = tk.Frame(self.notification, bg=self.card_bg)
+        notification_buttons.pack(pady=12)
+        
+        ttk.Button(notification_buttons, text="编辑", command=self.open_marker_edit, 
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=10)
+        ttk.Button(notification_buttons, text="确定", command=self.notification.withdraw, 
+                  style='Accent.TButton').pack(side=tk.LEFT, padx=10)
+        
+        # 标记编辑窗口
         self.marker_edit_window = tk.Toplevel(self.root)
         self.marker_edit_window.title("编辑标记")
-        self.marker_edit_window.geometry("400x200")
+        self.marker_edit_window.geometry("400x220")
         self.marker_edit_window.transient(self.root)
         self.marker_edit_window.withdraw()
-        ttk.Label(self.marker_edit_window, text="标记名称:").pack(pady=5)
+        self.marker_edit_window.configure(bg=self.card_bg)
+        
+        tk.Label(self.marker_edit_window, text="标记名称:", 
+                font=('Arial', 10),
+                bg=self.card_bg, fg=self.text_color).pack(pady=10)
         self.marker_name_var = tk.StringVar()
-        ttk.Entry(self.marker_edit_window, textvariable=self.marker_name_var).pack(fill=tk.X, padx=10, pady=5)
-        ttk.Label(self.marker_edit_window, text="备注:").pack(pady=5)
+        ttk.Entry(self.marker_edit_window, textvariable=self.marker_name_var, 
+                 style='Custom.TEntry').pack(fill=tk.X, padx=20, pady=6)
+        
+        tk.Label(self.marker_edit_window, text="备注:", 
+                font=('Arial', 10),
+                bg=self.card_bg, fg=self.text_color).pack(pady=10)
         self.marker_note_var = tk.StringVar()
-        ttk.Entry(self.marker_edit_window, textvariable=self.marker_note_var).pack(fill=tk.X, padx=10, pady=5)
-        ttk.Button(self.marker_edit_window, text="保存", command=self.save_marker_edit).pack(pady=10)
-        ttk.Button(self.marker_edit_window, text="取消", command=self.marker_edit_window.withdraw).pack(pady=5)
+        ttk.Entry(self.marker_edit_window, textvariable=self.marker_note_var, 
+                 style='Custom.TEntry').pack(fill=tk.X, padx=20, pady=6)
+        
+        button_frame = tk.Frame(self.marker_edit_window, bg=self.card_bg)
+        button_frame.pack(pady=15)
+        
+        ttk.Button(button_frame, text="保存", command=self.save_marker_edit, 
+                  style='Accent.TButton').pack(side=tk.LEFT, padx=12)
+        ttk.Button(button_frame, text="取消", command=self.marker_edit_window.withdraw, 
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=12)
+        
         self.current_marker_index = -1
-    
-    def start_drag_selection(self):
-        self.root.iconify()
-        time.sleep(0.5)
-        box = pyautogui.selectROI("选择录屏区域", False)
-        self.root.deiconify()
-        if box:
-            x, y, w, h = box
-            self.x_entry.delete(0, tk.END)
-            self.x_entry.insert(0, str(x))
-            self.y_entry.delete(0, tk.END)
-            self.y_entry.insert(0, str(y))
-            self.width_entry.delete(0, tk.END)
-            self.width_entry.insert(0, str(w))
-            self.height_entry.delete(0, tk.END)
-            self.height_entry.insert(0, str(h))
-    
+
     def start_recording(self):
-        try:
-            self.x = int(self.x_entry.get())
-            self.y = int(self.y_entry.get())
-            self.width = int(self.width_entry.get())
-            self.height = int(self.height_entry.get())
-        except ValueError:
-            messagebox.showerror("错误", "请输入有效的数字")
-            return
-        if self.width <= 0 or self.height <= 0:
-            messagebox.showerror("错误", "宽度和高度必须大于0")
-            return
+        screen_width, screen_height = pyautogui.size()
+        self.x = 0
+        self.y = 0
+        self.width = screen_width
+        self.height = screen_height
+        
         self.recording = True
         self.paused = False
         self.start_btn.config(state=tk.DISABLED)
@@ -191,6 +333,12 @@ class ScreenRecorder:
         self.stop_btn.config(state=tk.NORMAL)
         self.mark_btn.config(state=tk.NORMAL)
         self.clip_btn.config(state=tk.DISABLED)
+        
+        # 设置视频文件路径
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        self.video_file = os.path.join(current_dir, f"recording_{timestamp}.avi")
+        
         self.recording_start_time = time.time()
         self.current_time = 0
         self.recorded_frames = 0
@@ -198,24 +346,40 @@ class ScreenRecorder:
         self.stop_update = False
         self.update_thread.daemon = True
         self.update_thread.start()
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self.video_file = f"recording_{timestamp}.avi"
-        fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        self.recorder = cv2.VideoWriter(self.video_file, fourcc, 20.0, (self.width, self.height))
-        self.recorder_thread = threading.Thread(target=self.record_screen)
-        self.recorder_thread.daemon = True
-        self.recorder_thread.start()
-        self.show_notification("开始录屏")
+        self.recorder = cv2.VideoWriter(self.video_file, cv2.VideoWriter_fourcc(*'XVID'), 20.0, (self.width, self.height))
+        self.record_thread = threading.Thread(target=self.record_screen)
+        self.record_thread.daemon = True
+        self.record_thread.start()
+        
+        # 创建缩略功能区
+        self.create_mini_control()
+        
+        # 最小化主窗口
+        self.root.iconify()
+        
+        self.show_notification("开始录屏", is_weak=True)
     
     def pause_recording(self):
         self.paused = not self.paused
         if self.paused:
             self.pause_btn.config(text="继续录屏")
-            self.show_notification("暂停录屏")
+            # 更新缩略功能区的按钮文本
+            if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
+                self.mini_pause_btn.config(text="继续录屏")
+            # 更新状态标签
+            if hasattr(self, 'mini_status_label') and self.mini_status_label:
+                self.mini_status_label.config(text="已暂停", foreground='orange')
+            self.show_notification("暂停录屏", is_weak=True)
         else:
             self.pause_btn.config(text="暂停录屏")
+            # 更新缩略功能区的按钮文本
+            if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
+                self.mini_pause_btn.config(text="暂停录屏")
+            # 更新状态标签
+            if hasattr(self, 'mini_status_label') and self.mini_status_label:
+                self.mini_status_label.config(text="录屏中...", foreground='green')
             self.recording_start_time += time.time() - self.pause_time
-            self.show_notification("继续录屏")
+            self.show_notification("继续录屏", is_weak=True)
     
     def stop_recording(self):
         self.recording = False
@@ -231,11 +395,70 @@ class ScreenRecorder:
             self.update_thread.join(timeout=1)
         if self.recorder:
             self.recorder.release()
+        
+        # 等待录屏线程结束
+        if hasattr(self, 'record_thread') and self.record_thread:
+            self.record_thread.join(timeout=2)
+        
+        # 关闭缩略功能区
+        self.close_mini_control()
+        
+        # 恢复主窗口
+        self.root.deiconify()
+        
         if self.video_file and os.path.exists(self.video_file):
             self.calculate_video_duration()
             self.play_btn.config(state=tk.NORMAL)
-            self.show_notification("录屏完成")
+            self.show_notification("录屏完成", is_weak=True)
             self.save_recording_path()
+            # 显示视频第一帧
+            self.show_first_frame()
+    
+    def show_first_frame(self):
+        """显示视频的第一帧画面"""
+        if not self.video_file or not os.path.exists(self.video_file):
+            return
+        
+        cap = cv2.VideoCapture(self.video_file)
+        if not cap.isOpened():
+            cap.release()
+            return
+        
+        # 读取第一帧
+        ret, frame = cap.read()
+        cap.release()
+        
+        if not ret:
+            return
+        
+        # 转换颜色空间
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # 获取画布尺寸并缩放
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        if canvas_width > 0 and canvas_height > 0:
+            img = Image.fromarray(frame)
+            img_width, img_height = img.size
+            canvas_ratio = canvas_width / canvas_height
+            img_ratio = img_width / img_height
+            
+            if canvas_ratio > img_ratio:
+                new_height = canvas_height
+                new_width = int(img_width * (canvas_height / img_height))
+            else:
+                new_width = canvas_width
+                new_height = int(img_height * (canvas_width / img_width))
+            
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+            imgtk = ImageTk.PhotoImage(image=img)
+            
+            # 居中显示
+            x_offset = (canvas_width - new_width) // 2
+            y_offset = (canvas_height - new_height) // 2
+            self.canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=imgtk)
+            self.canvas.imgtk = imgtk
     
     def record_screen(self):
         while self.recording:
@@ -271,26 +494,58 @@ class ScreenRecorder:
             progress = self.current_time / self.video_duration
         else:
             progress = 0
+        
+        # 绘制背景
         self.progress_canvas.create_rectangle(0, 0, width, height, fill="#333", outline="")
+        
+        # 绘制进度条（在画布下方）
+        progress_bar_y = height - 30
+        progress_bar_height = 20
         progress_width = int(width * progress)
-        self.progress_canvas.create_rectangle(0, 0, progress_width, height, fill="#4CAF50", outline="")
-        knob_x = progress_width
-        self.progress_canvas.create_oval(knob_x - 8, 0, knob_x + 8, height, fill="#fff", outline="#ddd", width=2)
+        self.progress_canvas.create_rectangle(0, progress_bar_y, width, progress_bar_y + progress_bar_height, fill="#444", outline="")
+        self.progress_canvas.create_rectangle(0, progress_bar_y, progress_width, progress_bar_y + progress_bar_height, fill="#4CAF50", outline="")
+        
+        # 绘制黄色标记（在进度条上方）
         if self.recording or self.video_duration > 0:
-            total_duration = self.video_duration if self.video_duration > 0 else self.current_time + 1
+            # 在录制模式下，使用 current_time 作为总时长
+            # 在播放模式下，使用 video_duration 或所有标记的最大时间
+            max_marker_time = 0
+            if self.recording:
+                total_duration = self.current_time if self.current_time > 0 else 1
+            else:
+                # 如果 video_duration 为0或小于任何标记的时间，使用标记的最大时间
+                max_marker_time = max([m["time"] for m in self.markers]) if self.markers else 0
+                if self.video_duration <= 0 or self.video_duration < max_marker_time:
+                    total_duration = max_marker_time if max_marker_time > 0 else 1
+                else:
+                    total_duration = self.video_duration
+            print(f"[调试] 绘制标记: 录制模式={self.recording}, video_duration={self.video_duration:.2f}, max_marker_time={max_marker_time:.2f}, total_duration={total_duration:.2f}, 标记数量={len(self.markers)}")
             if total_duration > 0:
                 for marker in self.markers:
                     marker_time = marker["time"]
+                    print(f"[调试] 标记时间: {marker_time:.2f}, 条件: {marker_time} <= {total_duration}")
                     if marker_time <= total_duration:
                         marker_pos = (marker_time / total_duration) * width
+                        # 确保标记不会超出画布边界
+                        marker_pos = max(4, min(width - 4, marker_pos))
+                        print(f"[调试] 绘制标记: 位置={marker_pos:.2f}, 时间={marker_time:.2f}, 画布宽度={width}")
                         marker_id = self.progress_canvas.create_oval(
-                            marker_pos - 4, 0, marker_pos + 4, height,
+                            marker_pos - 4, progress_bar_y - 10, marker_pos + 4, progress_bar_y,
                             fill="#ffeb3b", outline="#fbc02d", width=2
                         )
+                        # 为标记添加标签
+                        self.progress_canvas.addtag_withtag("yellow_marker", marker_id)
                         try:
-                            self.progress_canvas.tag_bind(marker_id, "<Button-1>", lambda e, idx=self.markers.index(marker): self.jump_to_marker_and_play(idx))
-                        except Exception:
+                            idx = self.markers.index(marker)
+                            print(f"[调试] 标记索引: {idx}")
+                            self.progress_canvas.tag_bind(marker_id, "<Button-1>", lambda e, idx=idx: self.jump_to_marker_and_play(idx))
+                        except Exception as ex:
+                            print(f"[调试] 标记绑定失败: {ex}")
                             pass
+        
+        # 在非录制模式下，确保黄色标记在最上层（但在剪辑标记之下）
+        if not self.recording and self.markers:
+            self.progress_canvas.tag_raise("yellow_marker")
         
         # 绘制截取视频标识
         if self.clip_mode and self.video_duration > 0:
@@ -307,71 +562,59 @@ class ScreenRecorder:
                         fill="#33691e", outline="", stipple="gray50"
                     )
                 
-                # 绘制开始截取标识（剪映样式 - 更明显）
-                # 绘制垂直线
-                start_line_id = self.progress_canvas.create_line(
-                    start_pos, 0, start_pos, height + 20,
-                    fill="#4caf50", width=6
+                # 绘制开始截取标识（长方形样式，在画布内）
+                rect_width = 50
+                rect_height = 120  # 长方形长度，确保在画布内显示
+                # 绘制长方形（在画布上方，中心与进度条位置对齐）
+                self.clip_start_id = self.progress_canvas.create_rectangle(
+                    start_pos - rect_width // 2, 10,
+                    start_pos + rect_width // 2, 10 + rect_height,
+                    fill="#4caf50", outline="#388e3c", width=2
                 )
-                # 绘制三角形箭头（在时间轴上方）
-                self.clip_start_id = self.progress_canvas.create_polygon(
-                    start_pos - 20, 20, start_pos + 20, 20, start_pos, 0,
-                    fill="#4caf50", outline="#388e3c", width=3
-                )
-                # 添加开始标记文本
+                # 添加开始位置文本（竖向排列4个字）
                 start_text_id = self.progress_canvas.create_text(
-                    start_pos, -5,
-                    text="开始",
-                    fill="#4caf50",
-                    font=("Arial", 14, "bold"),
-                    anchor=tk.S
+                    start_pos - rect_width // 2 + 5, 10 + rect_height // 2,
+                    text="开\n始\n位\n置",
+                    fill="white",
+                    font=("Arial", 10, "bold"),
+                    anchor=tk.W
                 )
                 # 创建一个透明的大区域用于点击
                 start_hitbox_id = self.progress_canvas.create_rectangle(
-                    start_pos - 30, -15, start_pos + 30, height + 15,
+                    start_pos - 30, 5, start_pos + 30, 15 + rect_height,
                     fill="", outline=""
                 )
                 
                 # 为开始标记的所有元素添加标签
-                self.progress_canvas.addtag_withtag("clip_start", start_line_id)
                 self.progress_canvas.addtag_withtag("clip_start", self.clip_start_id)
                 self.progress_canvas.addtag_withtag("clip_start", start_text_id)
                 self.progress_canvas.addtag_withtag("clip_start", start_hitbox_id)
                 
-                # 绘制结束截取标识（剪映样式 - 更明显）
-                # 绘制垂直线
-                end_line_id = self.progress_canvas.create_line(
-                    end_pos, 0, end_pos, height + 20,
-                    fill="#f44336", width=6
+                # 绘制结束截取标识（长方形样式，在画布内）
+                # 绘制长方形（在画布上方，中心与进度条位置对齐）
+                self.clip_end_id = self.progress_canvas.create_rectangle(
+                    end_pos - rect_width // 2, 10,
+                    end_pos + rect_width // 2, 10 + rect_height,
+                    fill="#f44336", outline="#d32f2f", width=2
                 )
-                # 绘制三角形箭头（在时间轴上方）
-                self.clip_end_id = self.progress_canvas.create_polygon(
-                    end_pos - 20, 20, end_pos + 20, 20, end_pos, 0,
-                    fill="#f44336", outline="#d32f2f", width=3
-                )
-                # 添加结束标记文本
+                # 添加结束位置文本（竖向排列4个字）
                 end_text_id = self.progress_canvas.create_text(
-                    end_pos, -5,
-                    text="结束",
-                    fill="#f44336",
-                    font=("Arial", 14, "bold"),
-                    anchor=tk.S
+                    end_pos - rect_width // 2 + 5, 10 + rect_height // 2,
+                    text="结\n束\n位\n置",
+                    fill="white",
+                    font=("Arial", 10, "bold"),
+                    anchor=tk.W
                 )
                 # 创建一个透明的大区域用于点击
                 end_hitbox_id = self.progress_canvas.create_rectangle(
-                    end_pos - 30, -15, end_pos + 30, height + 15,
+                    end_pos - 30, 5, end_pos + 30, 15 + rect_height,
                     fill="", outline=""
                 )
                 
                 # 为结束标记的所有元素添加标签
-                self.progress_canvas.addtag_withtag("clip_end", end_line_id)
                 self.progress_canvas.addtag_withtag("clip_end", self.clip_end_id)
                 self.progress_canvas.addtag_withtag("clip_end", end_text_id)
                 self.progress_canvas.addtag_withtag("clip_end", end_hitbox_id)
-                
-                # 设置层级置顶
-                self.progress_canvas.tag_raise("clip_start")
-                self.progress_canvas.tag_raise("clip_end")
                 
                 # 绑定拖动事件
                 try:
@@ -393,6 +636,21 @@ class ScreenRecorder:
                     print("剪辑标记事件绑定成功")
                 except Exception as e:
                     print(f"事件绑定失败: {e}")
+                
+                # 设置层级置顶（剪辑标记在所有元素之上，包括黄色标记和进度旋钮）
+                self.progress_canvas.tag_raise("clip_start")
+                self.progress_canvas.tag_raise("clip_end")
+                self.progress_canvas.tag_raise("yellow_marker")
+        
+        # 最后绘制进度旋钮，确保它在所有元素之上
+        knob_x = progress_width
+        knob_id = self.progress_canvas.create_oval(
+            knob_x - 8, progress_bar_y - 5, knob_x + 8, progress_bar_y + progress_bar_height + 5,
+            fill="#fff", outline="#ddd", width=2
+        )
+        # 为旋钮添加标签并设置为置顶
+        self.progress_canvas.addtag_withtag("progress_knob", knob_id)
+        self.progress_canvas.tag_raise("progress_knob")
     
     def update_progress(self):
         while not self.stop_update:
@@ -422,22 +680,36 @@ class ScreenRecorder:
     
     def mark_progress(self):
         if self.recording or self.video_file:
+            marker_time = self.current_time if self.video_file else time.time() - self.recording_start_time
+            print(f"[调试] 添加标记: 时间={marker_time:.2f}")
             marker = {
-                "id": self.marker_count + 1, "name": str(self.marker_count + 1), "time": self.current_time if self.video_file else time.time() - self.recording_start_time, "note": ""
+                "id": self.marker_count + 1, "name": str(self.marker_count + 1), "time": marker_time, "note": ""
             }
             self.markers.append(marker)
             self.marker_count += 1
+            print(f"[调试] 标记已添加，当前标记数量={len(self.markers)}")
+            for i, m in enumerate(self.markers):
+                print(f"[调试] 标记{i}: 时间={m['time']:.2f}")
             self.update_progress_bar()
-            self.show_notification(f"已完成标记：{self.marker_count}")
+            self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True)
     
     def start_clip(self):
         if self.video_file and self.video_duration > 0:
             self.clip_mode = True
             self.clip_start = 0
             self.clip_end = self.video_duration
-            self.clip_btn.config(state=tk.DISABLED)
+            # 切换按钮为取消截取
+            self.clip_btn.config(text="取消截取", command=self.cancel_clip, state=tk.NORMAL)
             self.finish_clip_btn.config(state=tk.NORMAL)
             self.update_progress_bar()
+
+    def cancel_clip(self):
+        """取消截取视频"""
+        self.clip_mode = False
+        # 恢复按钮为截取视频
+        self.clip_btn.config(text="截取视频", command=self.start_clip, state=tk.NORMAL)
+        self.finish_clip_btn.config(state=tk.DISABLED)
+        self.update_progress_bar()
     
     def finish_clip(self):
         if self.clip_mode:
@@ -450,9 +722,10 @@ class ScreenRecorder:
                 }
                 self.clips.append(clip)
                 self.update_clips()
-                self.show_notification(f"已完成截取，片段时长：{self.format_time(clip['duration'])}")
+                self.show_notification(f"已完成截取，片段时长：{self.format_time(clip['duration'])}", is_weak=True)
             self.clip_mode = False
-            self.clip_btn.config(state=tk.NORMAL)
+            # 恢复按钮为截取视频
+            self.clip_btn.config(text="截取视频", command=self.start_clip, state=tk.NORMAL)
             self.finish_clip_btn.config(state=tk.DISABLED)
             self.update_progress_bar()
     
@@ -566,48 +839,365 @@ class ScreenRecorder:
     
     def play_clip(self, clip):
         if self.video_file:
+            print("\n=== 开始播放剪辑 ===")
+            print(f"剪辑信息: 开始时间={clip['start']:.2f}秒, 结束时间={clip['end']:.2f}秒, 时长={clip['duration']:.2f}秒")
+            
+            # 检查剪辑时间范围是否有效
+            if clip['start'] >= clip['end']:
+                print("[错误] 剪辑时间范围无效: 开始时间 >= 结束时间")
+                messagebox.showerror("错误", "剪辑时间范围无效")
+                return
+            
+            # 检查视频文件是否存在
+            if not os.path.exists(self.video_file):
+                print(f"[错误] 视频文件不存在: {self.video_file}")
+                messagebox.showerror("错误", "视频文件不存在")
+                return
+            
+            print(f"视频文件: {self.video_file}")
+            print(f"文件大小: {os.path.getsize(self.video_file):,} 字节")
+            
+            # 停止当前可能正在播放的视频
+            print(f"当前 stop_video 值: {self.stop_video}")
             self.stop_video = True
+            print(f"设置 stop_video 为 True")
             if self.video_thread:
+                print("等待当前视频线程结束...")
                 self.video_thread.join(timeout=1)
+                print("当前视频线程已结束")
+            # 重置 stop_video 为 False，为新的剪辑播放做准备
+            self.stop_video = False
+            print(f"重置 stop_video 为 False")
+            # 启动剪辑播放线程
+            print("启动剪辑播放线程...")
             self.video_thread = threading.Thread(target=self.play_clip_thread, args=(clip,))
             self.video_thread.daemon = True
             self.video_thread.start()
+            print("剪辑播放线程已启动")
     
     def play_clip_thread(self, clip):
+        print("\n=== 剪辑播放线程开始 ===")
+        print(f"线程ID: {threading.get_ident()}")
         cap = cv2.VideoCapture(self.video_file)
         if not cap.isOpened():
+            print("[错误] 无法打开视频文件")
             messagebox.showerror("错误", "无法打开视频文件")
             return
-        start_frame = int(clip["start"] * cap.get(cv2.CAP_PROP_FPS))
-        end_frame = int(clip["end"] * cap.get(cv2.CAP_PROP_FPS))
+        
+        # 获取视频信息
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        print(f"视频信息: FPS={fps:.1f}, 总帧数={total_frames}")
+        
+        start_frame = int(clip["start"] * fps)
+        end_frame = int(clip["end"] * fps)
+        print(f"剪辑范围: 开始帧={start_frame}, 结束帧={end_frame}")
+        
+        # 设置起始帧
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         current_frame = start_frame
+        print(f"当前帧设置为: {current_frame}")
+        
+        # 计算弹窗大小为当前工具窗口的70%
+        root_width = self.root.winfo_width()
+        root_height = self.root.winfo_height()
+        if root_width == 0 or root_height == 0:
+            # 如果窗口还未初始化，使用默认值
+            root_width = 1200
+            root_height = 800
+        window_width = int(root_width * 0.7)
+        window_height = int(root_height * 0.7)
+        print(f"弹窗大小: {window_width}x{window_height}")
+        
+        # 创建播放窗口
         clip_window = tk.Toplevel(self.root)
         clip_window.title(f"播放片段 {clip['id']}")
-        clip_window.geometry(f"{self.width}x{self.height + 50}")
+        clip_window.geometry(f"{window_width}x{window_height}")
+        clip_window.resizable(True, True)
+        
+        # 创建画布
         clip_canvas = tk.Canvas(clip_window, bg="black")
         clip_canvas.pack(fill=tk.BOTH, expand=True)
-        clip_window.protocol("WM_DELETE_WINDOW", lambda: self.on_clip_window_close(clip_window, cap))
+        
+        # 创建控制按钮框架
+        control_frame = tk.Frame(clip_window, bg="#333")
+        control_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
+        
+        # 播放按钮
+        def play_video():
+            nonlocal is_playing, current_frame, frame_count
+            if not is_playing:
+                is_playing = True
+                play_btn.config(state=tk.DISABLED)
+                pause_btn.config(state=tk.NORMAL)
+            # 如果已经播放到结尾，重新开始播放
+            if current_frame > end_frame:
+                current_frame = start_frame
+                frame_count = 0
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                # 重置时间和进度条
+                time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
+                width = progress_canvas.winfo_width()
+                if width > 0:
+                    progress_canvas.delete('all')
+                    progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                    progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+        
+        # 暂停按钮
+        def pause_video():
+            nonlocal is_playing
+            if is_playing:
+                is_playing = False
+                play_btn.config(state=tk.NORMAL)
+                pause_btn.config(state=tk.DISABLED)
+        
+        is_playing = True
+        play_btn = tk.Button(control_frame, text="播放", command=play_video, padx=10, pady=5)
+        play_btn.pack(side=tk.LEFT, padx=5)
+        play_btn.config(state=tk.DISABLED)  # 初始状态下播放中，禁用播放按钮
+        
+        pause_btn = tk.Button(control_frame, text="暂停", command=pause_video, padx=10, pady=5)
+        pause_btn.pack(side=tk.LEFT, padx=5)
+        pause_btn.config(state=tk.NORMAL)  # 初始状态下播放中，启用暂停按钮
+        
+        # 关闭按钮（隐藏）
+        def close_window():
+            nonlocal stop_playback
+            stop_playback = True
+            cap.release()
+            clip_window.destroy()
+        
+        # 隐藏关闭按钮，通过窗口关闭按钮关闭
+        clip_window.protocol("WM_DELETE_WINDOW", close_window)
+        
+        # 时间轴和进度条（与主页面保持一致）
+        time_frame = tk.Frame(control_frame, bg="#333")
+        time_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        
+        # 时间标签
+        time_var = tk.StringVar()
+        time_var.set("00:00 / 00:00")
+        time_label = tk.Label(time_frame, textvariable=time_var, fg="white", bg="#333")
+        time_label.pack(side=tk.RIGHT, padx=10)
+        
+        # 进度条画布
+        progress_canvas = tk.Canvas(time_frame, height=20, bg="#333", highlightthickness=0)
+        progress_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        
+        # 进度条拖动状态
+        progress_bar_dragging = False
+        
+        # 进度条点击事件
+        def on_progress_click(event):
+            nonlocal progress_bar_dragging, current_frame
+            if not progress_bar_dragging:
+                width = progress_canvas.winfo_width()
+                if width > 0:
+                    position = max(0, min(1, event.x / width))
+                    # 计算新的帧位置
+                    new_frame = int(start_frame + position * total_clip_frames)
+                    new_frame = max(start_frame, min(end_frame, new_frame))
+                    # 设置视频位置
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, new_frame)
+                    current_frame = new_frame
+        
+        # 进度条拖动事件
+        def on_progress_drag(event):
+            nonlocal progress_bar_dragging, current_frame
+            if progress_bar_dragging:
+                width = progress_canvas.winfo_width()
+                if width > 0:
+                    position = max(0, min(1, event.x / width))
+                    # 计算新的帧位置
+                    new_frame = int(start_frame + position * total_clip_frames)
+                    new_frame = max(start_frame, min(end_frame, new_frame))
+                    # 设置视频位置
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, new_frame)
+                    current_frame = new_frame
+        
+        # 进度条释放事件
+        def on_progress_release(event):
+            nonlocal progress_bar_dragging
+            progress_bar_dragging = False
+        
+        # 绑定进度条事件
+        progress_canvas.bind("<Button-1>", on_progress_click)
+        progress_canvas.bind("<B1-Motion>", on_progress_drag)
+        progress_canvas.bind("<ButtonRelease-1>", on_progress_release)
+        
+        # 窗口关闭事件
+        clip_window.protocol("WM_DELETE_WINDOW", close_window)
+        print("播放窗口已创建")
+        
+        # 确保 stop_video 为 False
         self.stop_video = False
-        while current_frame <= end_frame and not self.stop_video:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(frame)
-            imgtk = ImageTk.PhotoImage(image=img)
-            clip_canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
-            clip_canvas.imgtk = imgtk
-            clip_window.update()
-            time.sleep(0.05)
-            current_frame += 1
+        stop_playback = False
+        print(f"线程内设置 stop_video 为: {self.stop_video}")
+        
+        # 计算总帧数，用于调试
+        total_clip_frames = end_frame - start_frame + 1
+        print(f"剪辑总帧数: {total_clip_frames}")
+        
+        # 格式化时间函数
+        def format_time(seconds):
+            minutes = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{minutes:02d}:{secs:02d}"
+        
+        # 检查循环条件
+        print(f"循环前检查: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}")
+        print(f"循环条件: {current_frame <= end_frame} and {not self.stop_video} and {not stop_playback} = {current_frame <= end_frame and not self.stop_video and not stop_playback}")
+        
+        frame_count = 0
+        # 主循环：保持线程活跃，支持重复播放
+        while not self.stop_video and not stop_playback:
+            # 检查是否需要重新开始播放
+            if is_playing:
+                # 如果已经播放到结尾，停止播放
+                if current_frame > end_frame:
+                    is_playing = False
+                    play_btn.config(state=tk.NORMAL)  # 启用播放按钮
+                    pause_btn.config(state=tk.DISABLED)  # 禁用暂停按钮
+                    # 重置到开始位置
+                    current_frame = start_frame
+                    frame_count = 0
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                    # 重置时间和进度条
+                    time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
+                    width = progress_canvas.winfo_width()
+                    if width > 0:
+                        progress_canvas.delete('all')
+                        progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                        progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+                    # 跳过本次循环，等待用户点击播放
+                    clip_window.update()
+                    time.sleep(0.1)
+                    continue
+                
+                # 检查是否到达结束帧
+                if current_frame == end_frame:
+                    # 播放完最后一帧后停止
+                    is_playing = False
+                    play_btn.config(state=tk.NORMAL)  # 启用播放按钮
+                    pause_btn.config(state=tk.DISABLED)  # 禁用暂停按钮
+                    # 重置到开始位置
+                    current_frame = start_frame
+                    frame_count = 0
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                    # 重置时间和进度条
+                    time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
+                    width = progress_canvas.winfo_width()
+                    if width > 0:
+                        progress_canvas.delete('all')
+                        progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                        progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+                    # 跳过本次循环，等待用户点击播放
+                    clip_window.update()
+                    time.sleep(0.1)
+                    continue
+                
+                print(f"\n循环开始: 第{frame_count}次迭代")
+                print(f"当前状态: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}, stop_playback={stop_playback}")
+                
+                # 读取帧
+                ret, frame = cap.read()
+                print(f"读取帧: ret={ret}")
+                
+                if not ret:
+                    print(f"[警告] 读取帧失败，当前帧: {current_frame}")
+                    # 停止播放
+                    is_playing = False
+                    play_btn.config(state=tk.NORMAL)  # 启用播放按钮
+                    pause_btn.config(state=tk.DISABLED)  # 禁用暂停按钮
+                    # 重置到开始位置
+                    current_frame = start_frame
+                    frame_count = 0
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                    # 重置时间和进度条
+                    time_var.set(f"00:00 / {format_time(total_clip_frames / fps)}")
+                    width = progress_canvas.winfo_width()
+                    if width > 0:
+                        progress_canvas.delete('all')
+                        progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                        progress_canvas.create_oval(-6, 2, 6, 18, fill="#fff", outline="#ddd", width=2)
+                    # 跳过本次循环，等待用户点击播放
+                    clip_window.update()
+                    time.sleep(0.1)
+                    continue
+                
+                # 转换颜色并调整大小以适应窗口
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # 获取画布大小
+                canvas_width = clip_canvas.winfo_width()
+                canvas_height = clip_canvas.winfo_height()
+                if canvas_width > 0 and canvas_height > 0:
+                    # 调整帧大小
+                    img = Image.fromarray(frame)
+                    img = img.resize((canvas_width, canvas_height), Image.LANCZOS)
+                    imgtk = ImageTk.PhotoImage(image=img)
+                    clip_canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
+                    clip_canvas.imgtk = imgtk
+                
+                clip_window.update()
+                print("帧已显示")
+                
+                # 延时
+                time.sleep(1/fps)  # 使用视频的实际帧率
+                current_frame += 1
+                frame_count += 1
+                
+                # 计算当前时间和总时间
+                current_time = (current_frame - start_frame) / fps
+                total_time = total_clip_frames / fps
+                
+                # 更新时间标签
+                time_var.set(f"{format_time(current_time)} / {format_time(total_time)}")
+                
+                # 更新进度条
+                width = progress_canvas.winfo_width()
+                if width > 0:
+                    progress = (current_frame - start_frame) / total_clip_frames
+                    progress_width = int(width * progress)
+                    # 清除旧的进度条
+                    progress_canvas.delete('all')
+                    # 绘制背景
+                    progress_canvas.create_rectangle(0, 0, width, 20, fill="#555", outline="")
+                    # 绘制进度
+                    progress_canvas.create_rectangle(0, 0, progress_width, 20, fill="#4CAF50", outline="")
+                    # 绘制旋钮
+                    knob_x = progress_width
+                    progress_canvas.create_oval(knob_x - 6, 2, knob_x + 6, 18, fill="#fff", outline="#ddd", width=2)
+                
+                # 每5帧打印一次进度
+                if frame_count % 5 == 0:
+                    print(f"播放进度: 帧 {current_frame}/{end_frame} ({(current_frame-start_frame)/total_clip_frames*100:.1f}%)")
+            else:
+                # 暂停状态或等待播放
+                clip_window.update()
+                time.sleep(0.1)
+        
+        print(f"\n=== 循环结束 ===")
+        print(f"最终状态: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}, stop_playback={stop_playback}")
+        print(f"播放了 {frame_count} 帧")
+        
+        # 清理
+        print("释放视频捕获")
         cap.release()
+        print("销毁播放窗口")
         clip_window.destroy()
+        print("剪辑播放线程结束")
     
     def on_clip_window_close(self, window, cap):
+        """旧的窗口关闭处理函数（保留以确保兼容性）"""
         self.stop_video = True
-        cap.release()
-        window.destroy()
+        try:
+            cap.release()
+        except:
+            pass
+        try:
+            window.destroy()
+        except:
+            pass
     
     def delete_selected_clip(self):
         selected = self.clip_listbox.curselection()
@@ -629,6 +1219,7 @@ class ScreenRecorder:
             self.video_thread.start()
     
     def play_video_thread(self):
+        print("\n=== 主页面视频播放线程开始 ===")
         self.video_capture = cv2.VideoCapture(self.video_file)
         if not self.video_capture.isOpened():
             messagebox.showerror("错误", "无法打开视频文件")
@@ -637,26 +1228,67 @@ class ScreenRecorder:
             self.pause_video_btn.config(state=tk.DISABLED)
             return
         self.stop_video = False
+        frame_count = 0
+        print(f"开始播放视频: {self.video_file}")
+        
         while self.video_playing and not self.stop_video:
             if not self.video_paused:
                 ret, frame = self.video_capture.read()
                 if not ret:
+                    print(f"[主页面] 读取帧失败，播放结束")
                     break
+                # 获取当前播放位置（毫秒）并更新 current_time
+                current_pos_msec = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
+                self.current_time = current_pos_msec / 1000.0
+                
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame)
+                # 缩放帧以适应canvas大小，保持宽高比
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                if canvas_width > 0 and canvas_height > 0:
+                    img_width, img_height = img.size
+                    canvas_ratio = canvas_width / canvas_height
+                    img_ratio = img_width / img_height
+                    
+                    if canvas_ratio > img_ratio:
+                        # Canvas更宽，以高度为基准缩放
+                        new_height = canvas_height
+                        new_width = int(img_width * (canvas_height / img_height))
+                    else:
+                        # Canvas更高，以宽度为基准缩放
+                        new_width = canvas_width
+                        new_height = int(img_height * (canvas_width / img_width))
+                    
+                    img = img.resize((new_width, new_height), Image.LANCZOS)
                 imgtk = ImageTk.PhotoImage(image=img)
-                self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
+                self.canvas.create_image(canvas_width // 2, canvas_height // 2, anchor=tk.CENTER, image=imgtk)
                 self.canvas.imgtk = imgtk
                 self.root.update()
+                
+                # 每10帧更新一次进度条，避免过于频繁的更新
+                frame_count += 1
+                if frame_count % 10 == 0:
+                    self.update_progress_bar()
+                    self.update_time_label()
+                
                 time.sleep(0.05)
             else:
                 time.sleep(0.1)
+        
+        print(f"[主页面] 播放循环结束，frame_count={frame_count}")
+        
         if self.video_capture:
             self.video_capture.release()
             self.video_capture = None
         self.video_playing = False
         self.play_btn.config(state=tk.NORMAL)
         self.pause_video_btn.config(state=tk.DISABLED)
+        # 播放结束时更新进度条到结束位置
+        self.current_time = self.video_duration
+        self.update_progress_bar()
+        self.update_time_label()
+        print("[主页面] 视频播放完成，状态已更新")
     
     def pause_video(self):
         self.video_paused = not self.video_paused
@@ -691,10 +1323,57 @@ class ScreenRecorder:
             if self.video_playing and self.video_capture:
                 self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
     
-    def show_notification(self, message):
-        self.notification_label.config(text=message)
-        self.notification.deiconify()
-        self.notification.after(3000, self.notification.withdraw)
+    def show_notification(self, message, is_weak=False):
+        if is_weak:
+            # 弱提示，自动消失
+            weak_notification = tk.Toplevel(self.root)
+            weak_notification.title("通知")
+            weak_notification.geometry("260x80")
+            weak_notification.transient(self.root)
+            weak_notification.attributes('-topmost', True)
+            weak_notification.configure(bg=self.card_bg)
+            
+            # 添加边框效果
+            weak_notification.overrideredirect(True)
+            
+            # 创建圆角效果的画布
+            canvas = tk.Canvas(weak_notification, width=260, height=80, bg=self.card_bg, 
+                            highlightthickness=1, highlightbackground=self.border_color)
+            canvas.pack()
+            
+            # 绘制圆角背景
+            def create_roundrectangle(canvas, x1, y1, x2, y2, radius, **kwargs):
+                points = [
+                    x1+radius, y1,
+                    x2-radius, y1,
+                    x2, y1+radius,
+                    x2, y2-radius,
+                    x2-radius, y2,
+                    x1+radius, y2,
+                    x1, y2-radius,
+                    x1, y1+radius
+                ]
+                return canvas.create_polygon(points, **kwargs)
+            
+            create_roundrectangle(canvas, 0, 0, 260, 80, 12, fill=self.light_bg, outline=self.border_color)
+            
+            # 添加消息文本
+            canvas.create_text(130, 40, text=message, fill=self.text_color, 
+                            font=('Arial', 11, 'bold'))
+            
+            # 居中显示
+            screen_width = weak_notification.winfo_screenwidth()
+            screen_height = weak_notification.winfo_screenheight()
+            x = (screen_width - 260) // 2
+            y = screen_height - 120
+            weak_notification.geometry(f"260x80+{x}+{y}")
+            
+            weak_notification.after(2000, weak_notification.destroy)
+        else:
+            # 原有通知（用于标记编辑）
+            self.notification_label.config(text=message)
+            self.notification.deiconify()
+            self.notification.after(3000, self.notification.withdraw)
     
     def open_marker_edit(self):
         if self.current_marker_index >= 0 and self.current_marker_index < len(self.markers):
@@ -708,7 +1387,7 @@ class ScreenRecorder:
             self.markers[self.current_marker_index]["name"] = self.marker_name_var.get()
             self.markers[self.current_marker_index]["note"] = self.marker_note_var.get()
             self.marker_edit_window.withdraw()
-            self.show_notification("标记已更新")
+            self.show_notification("标记已更新", is_weak=True)
     
     def format_time(self, seconds):
         minutes = int(seconds // 60)
@@ -723,6 +1402,56 @@ class ScreenRecorder:
                 f.write(f"{timestamp} - {os.path.join(current_dir, self.video_file)}\n")
         except Exception as e:
             print(f"[ERROR] 保存录屏路径失败: {str(e)}", file=sys.stderr)
+    
+    def create_mini_control(self):
+        """创建缩略功能区"""
+        # 创建独立窗口，不使用主窗口作为父窗口
+        self.mini_window = tk.Toplevel()
+        self.mini_window.title("录屏控制")
+        self.mini_window.geometry("580x170")
+        self.mini_window.resizable(False, False)
+        
+        # 设置窗口始终在最前面
+        self.mini_window.attributes('-topmost', True)
+        self.mini_window.configure(bg=self.card_bg)
+        
+        # 创建状态标签
+        self.mini_status_label = tk.Label(self.mini_window, text="录屏中...", 
+                                         font=('Arial', 12, 'bold'), 
+                                         fg=self.success_color,
+                                         bg=self.card_bg)
+        self.mini_status_label.pack(pady=18)
+        
+        # 创建按钮框架
+        button_frame = tk.Frame(self.mini_window, bg=self.card_bg)
+        button_frame.pack(pady=18)
+        
+        # 暂停按钮
+        self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", 
+                                       command=self.pause_recording, 
+                                       width=12,
+                                       style='Custom.TButton')
+        self.mini_pause_btn.pack(side=tk.LEFT, padx=12)
+        
+        # 结束按钮
+        self.mini_stop_btn = ttk.Button(button_frame, text="结束录屏", 
+                                      command=self.stop_recording, 
+                                      width=12,
+                                      style='Danger.TButton')
+        self.mini_stop_btn.pack(side=tk.LEFT, padx=12)
+        
+        # 标记按钮
+        self.mini_mark_btn = ttk.Button(button_frame, text="标记进度", 
+                                      command=self.mark_progress, 
+                                      width=12,
+                                      style='Accent.TButton')
+        self.mini_mark_btn.pack(side=tk.LEFT, padx=12)
+    
+    def close_mini_control(self):
+        """关闭缩略功能区"""
+        if self.mini_window:
+            self.mini_window.destroy()
+            self.mini_window = None
 
 if __name__ == "__main__":
     from PIL import Image, ImageTk
