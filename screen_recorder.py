@@ -217,13 +217,21 @@ class ScreenRecorder:
                                            style='Custom.TButton')
         self.record_history_btn.grid(row=0, column=6, padx=6, pady=2)
 
-        # 主框架
+        # 主框架 - 使用Frame和pack布局
         self.main_frame = tk.Frame(self.root, bg=self.bg_color)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
         # 左侧框架
         self.left_frame = tk.Frame(self.main_frame, bg=self.bg_color)
-        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # 右侧面板宽度
+        self.right_panel_width = 80
+        
+        # 右侧视频片段面板
+        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=12, style='Custom.TLabelframe')
+        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.right_frame.configure(width=self.right_panel_width)
         
         # 视频预览 - 卡片式设计
         self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=12, style='Custom.TLabelframe')
@@ -291,14 +299,11 @@ class ScreenRecorder:
                                   font=('Arial', 9),
                                   bg=self.card_bg, fg=self.secondary_text)
         self.time_label.pack(side=tk.RIGHT, pady=(8, 0))
-        # 右侧视频片段面板 - 卡片式设计
-        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=12, style='Custom.TLabelframe')
-        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=0)
-        self.right_frame.configure(width=300)
         
         # 片段列表
         self.clip_listbox = tk.Listbox(self.right_frame, 
                                      height=20, 
+                                     width=35,  # 缩小宽度
                                      bg="#151515", 
                                      fg=self.text_color, 
                                      highlightthickness=1, 
@@ -595,6 +600,9 @@ class ScreenRecorder:
                 # 更新文件名标签
                 self.video_filename_label.config(text=new_filename)
                 
+                # 更新片段列表显示（同步修改后的文件名）
+                self.update_clips()
+                
                 # 关闭弹窗
                 rename_window.destroy()
                 
@@ -773,7 +781,7 @@ class ScreenRecorder:
         self.progress_canvas.create_rectangle(padding, progress_bar_y, width - padding, progress_bar_y + progress_bar_height, fill="#444", outline="")
         self.progress_canvas.create_rectangle(padding, progress_bar_y, padding + progress_width, progress_bar_y + progress_bar_height, fill="#4CAF50", outline="")
         
-        # 绘制黄色标记（在进度条上方）
+        # 绘制黄色标记（在进度条上方）- 水滴形
         if self.recording or self.video_duration > 0:
             # 在录制模式下，使用 current_time 作为总时长
             # 在播放模式下，使用 video_duration 或所有标记的最大时间
@@ -789,7 +797,7 @@ class ScreenRecorder:
                     total_duration = self.video_duration
             print(f"[调试] 绘制标记: 录制模式={self.recording}, video_duration={self.video_duration:.2f}, max_marker_time={max_marker_time:.2f}, total_duration={total_duration:.2f}, 标记数量={len(self.markers)}")
             if total_duration > 0:
-                for marker in self.markers:
+                for idx, marker in enumerate(self.markers):
                     marker_time = marker["time"]
                     print(f"[调试] 标记时间: {marker_time:.2f}, 条件: {marker_time} <= {total_duration}")
                     if marker_time <= total_duration:
@@ -797,16 +805,52 @@ class ScreenRecorder:
                         # 确保标记不会超出画布边界
                         marker_pos = max(padding + 4, min(width - padding - 4, marker_pos))
                         print(f"[调试] 绘制标记: 位置={marker_pos:.2f}, 时间={marker_time:.2f}, 画布宽度={width}")
-                        marker_id = self.progress_canvas.create_oval(
-                            marker_pos - 4, progress_bar_y - 10, marker_pos + 4, progress_bar_y,
-                            fill="#ffeb3b", outline="#fbc02d", width=2
+                        
+                        # 获取标记名称
+                        marker_name = marker.get("name", str(idx + 1))
+                        
+                        # 绘制葫芦形标记（上面大圆、下面小圆，中间连接）
+                        marker_pos_x = marker_pos
+                        marker_top = progress_bar_y - 20
+                        
+                        # 葫芦形的多边形点（近似SVG葫芦形状）
+                        # 上面大圆部分
+                        gourd_points = [
+                            marker_pos_x - 20, marker_top - 25,  # 左上
+                            marker_pos_x - 10, marker_top - 30,  # 上尖
+                            marker_pos_x + 10, marker_top - 30,  # 右上
+                            marker_pos_x + 20, marker_top - 25,  # 右中
+                            marker_pos_x + 20, marker_top - 10,  # 右下
+                            marker_pos_x + 14, marker_top - 5,   # 腰部右
+                            marker_pos_x + 14, marker_top + 5,   # 颈部右
+                            marker_pos_x + 6, marker_top + 10,   # 底部右
+                            marker_pos_x, marker_top + 20,       # 底部尖
+                            marker_pos_x - 6, marker_top + 10,   # 底部左
+                            marker_pos_x - 14, marker_top + 5,   # 颈部左
+                            marker_pos_x - 14, marker_top - 5,   # 腰部左
+                            marker_pos_x - 20, marker_top - 10,  # 左下
+                            marker_pos_x - 20, marker_top - 25,  # 左上闭合
+                        ]
+                        
+                        marker_id = self.progress_canvas.create_polygon(
+                            gourd_points, fill="#ffeb3b", outline="#fbc02d", width=1
                         )
+                        
+                        # 在葫芦形中心添加标记名称
+                        text_id = self.progress_canvas.create_text(
+                            marker_pos_x, marker_top - 10,
+                            text=marker_name, fill="#000000", font=('Arial', 10, 'bold')
+                        )
+                        
                         # 为标记添加标签
                         self.progress_canvas.addtag_withtag("yellow_marker", marker_id)
+                        self.progress_canvas.addtag_withtag("yellow_marker", text_id)
+                        
+                        # 绑定点击事件
                         try:
-                            idx = self.markers.index(marker)
                             print(f"[调试] 标记索引: {idx}")
-                            self.progress_canvas.tag_bind(marker_id, "<Button-1>", lambda e, idx=idx: self.jump_to_marker_and_play(idx))
+                            self.progress_canvas.tag_bind(marker_id, "<Button-1>", lambda e, i=idx: self.jump_to_marker_and_play(i))
+                            self.progress_canvas.tag_bind(text_id, "<Button-1>", lambda e, i=idx: self.jump_to_marker_and_play(i))
                         except Exception as ex:
                             print(f"[调试] 标记绑定失败: {ex}")
                             pass
@@ -1182,11 +1226,48 @@ class ScreenRecorder:
     
     def update_clips(self):
         self.clip_listbox.delete(0, tk.END)
+        
+        # 获取当前视频的文件名（不含路径和后缀）
+        video_filename = ""
+        if self.video_file:
+            basename = os.path.basename(self.video_file)
+            video_filename = os.path.splitext(basename)[0] + "_"
+        
+        # 先收集所有片段信息，找出最长的名称
+        clip_items = []
         for clip in self.clips:
             start = self.format_time(clip["start"])
             end = self.format_time(clip["end"])
-            duration = self.format_time(clip["duration"])
-            self.clip_listbox.insert(tk.END, f"片段 {clip['id']}: {start} - {end} ({duration})")
+            
+            # 获取截取时入点和出点间的标记进度的名称
+            clip_start = clip["start"]
+            clip_end = clip["end"]
+            
+            # 查找在入点和出点之间的标记
+            markers_in_range = [m for m in self.markers if clip_start <= m["time"] <= clip_end]
+            
+            if len(markers_in_range) >= 1:
+                # 如果有>=1个标记，取靠左（时间最小）的标记名称
+                left_marker = min(markers_in_range, key=lambda m: m["time"])
+                marker_name = left_marker.get("name", "")
+            else:
+                # 如果有<1个标记（即0个），填充为空
+                marker_name = ""
+            
+            # 格式：{视频文件名}_{片段 id}: {开始时间} - {结束时间} ({标记名称})
+            item = f"{video_filename}片段 {clip['id']}: {start} - {end} ({marker_name})"
+            clip_items.append(item)
+            self.clip_listbox.insert(tk.END, item)
+        
+        # 计算最长的片段名称长度，并设置列表框宽度
+        if clip_items:
+            max_length = max(len(item) for item in clip_items)
+            # 加上5个字符的宽度
+            self.clip_listbox.configure(width=max_length + 5)
+        else:
+            # 默认宽度
+            self.clip_listbox.configure(width=35)
+        
         # 默认选中第一条数据
         if self.clips:
             self.clip_listbox.selection_set(0)
