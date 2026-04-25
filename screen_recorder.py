@@ -45,6 +45,9 @@ class ScreenRecorder:
         self.progress_knob_id = None
         self.progress_bar_dragging = False
         
+        # 存储每个视频文件对应的标记列表
+        self.video_markers = {}
+        
         # 截取视频相关变量
         self.clip_mode = False
         self.clip_start = 0
@@ -167,30 +170,30 @@ class ScreenRecorder:
         self.button_frame = tk.Frame(self.control_frame, bg=self.card_bg)
         self.button_frame.pack(side=tk.RIGHT)
         
-        # 主按钮 - 使用不同样式区分功能
+        # 主按钮 - 使用grid布局固定位置
         self.start_btn = ttk.Button(self.button_frame, text="开始录屏", command=self.start_recording, 
                                   style='Accent.TButton')
-        self.start_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        self.start_btn.grid(row=0, column=0, padx=6, pady=2)
         
         self.pause_btn = ttk.Button(self.button_frame, text="暂停录屏", command=self.pause_recording, 
-                                  state=tk.DISABLED, style='Custom.TButton')
-        self.pause_btn.pack(side=tk.LEFT, padx=6, pady=2)
+                                  style='Custom.TButton')
+        # 初始状态隐藏
         
         self.stop_btn = ttk.Button(self.button_frame, text="结束录屏", command=self.stop_recording, 
-                                  state=tk.DISABLED, style='Danger.TButton')
-        self.stop_btn.pack(side=tk.LEFT, padx=6, pady=2)
+                                  style='Danger.TButton')
+        # 初始状态隐藏
         
         self.mark_btn = ttk.Button(self.button_frame, text="标记进度", command=self.mark_progress, 
-                                  state=tk.DISABLED, style='Custom.TButton')
-        self.mark_btn.pack(side=tk.LEFT, padx=6, pady=2)
+                                  style='Custom.TButton')
+        # 初始状态隐藏
         
         self.clip_btn = ttk.Button(self.button_frame, text="截取视频", command=self.start_clip, 
                                   state=tk.DISABLED, style='Custom.TButton')
-        self.clip_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        self.clip_btn.grid(row=0, column=4, padx=6, pady=2)
         
         self.finish_clip_btn = ttk.Button(self.button_frame, text="完成截取", command=self.finish_clip, 
                                          state=tk.DISABLED, style='Accent.TButton')
-        self.finish_clip_btn.pack(side=tk.LEFT, padx=6, pady=2)
+        self.finish_clip_btn.grid(row=0, column=5, padx=6, pady=2)
 
         # 主框架
         self.main_frame = tk.Frame(self.root, bg=self.bg_color)
@@ -328,16 +331,21 @@ class ScreenRecorder:
         
         self.recording = True
         self.paused = False
-        self.start_btn.config(state=tk.DISABLED)
-        self.pause_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.NORMAL)
-        self.mark_btn.config(state=tk.NORMAL)
+        # 录制时：显示暂停、结束、标记按钮，隐藏开始按钮
+        self.start_btn.grid_remove()
+        self.pause_btn.grid(row=0, column=0, padx=6, pady=2)
+        self.stop_btn.grid(row=0, column=1, padx=6, pady=2)
+        self.mark_btn.grid(row=0, column=2, padx=6, pady=2)
         self.clip_btn.config(state=tk.DISABLED)
         
         # 设置视频文件路径
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.video_file = os.path.join(current_dir, f"recording_{timestamp}.avi")
+        
+        # 重置标记相关变量
+        self.markers = []
+        self.marker_count = 0
         
         self.recording_start_time = time.time()
         self.current_time = 0
@@ -385,10 +393,11 @@ class ScreenRecorder:
         self.recording = False
         if self.paused:
             self.recording_start_time += time.time() - self.pause_time
-        self.start_btn.config(state=tk.NORMAL)
-        self.pause_btn.config(state=tk.DISABLED)
-        self.stop_btn.config(state=tk.DISABLED)
-        self.mark_btn.config(state=tk.NORMAL)
+        # 未录制时：显示开始按钮，隐藏暂停、结束、标记按钮
+        self.pause_btn.grid_remove()
+        self.stop_btn.grid_remove()
+        self.mark_btn.grid_remove()
+        self.start_btn.grid(row=0, column=0, padx=6, pady=2)
         self.clip_btn.config(state=tk.NORMAL)
         self.stop_update = True
         if self.update_thread:
@@ -407,7 +416,22 @@ class ScreenRecorder:
         self.root.deiconify()
         
         if self.video_file and os.path.exists(self.video_file):
+            # 计算视频实际时长
             self.calculate_video_duration()
+            
+            # 调整标记时间，确保与视频实际时长匹配
+            if self.video_duration > 0 and self.markers:
+                # 录制时的总时长
+                recorded_duration = time.time() - self.recording_start_time
+                if recorded_duration > 0:
+                    # 计算时间比例，调整标记时间
+                    time_ratio = self.video_duration / recorded_duration
+                    for marker in self.markers:
+                        marker["time"] = marker["time"] * time_ratio
+            
+            # 保存当前视频的标记
+            self.video_markers[self.video_file] = self.markers.copy()
+            
             self.play_btn.config(state=tk.NORMAL)
             self.show_notification("录屏完成", is_weak=True)
             self.save_recording_path()
@@ -418,6 +442,14 @@ class ScreenRecorder:
         """显示视频的第一帧画面"""
         if not self.video_file or not os.path.exists(self.video_file):
             return
+        
+        # 加载当前视频的标记
+        if self.video_file in self.video_markers:
+            self.markers = self.video_markers[self.video_file].copy()
+            self.marker_count = len(self.markers)
+        else:
+            self.markers = []
+            self.marker_count = 0
         
         cap = cv2.VideoCapture(self.video_file)
         if not cap.isOpened():
@@ -459,6 +491,9 @@ class ScreenRecorder:
             y_offset = (canvas_height - new_height) // 2
             self.canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=imgtk)
             self.canvas.imgtk = imgtk
+        
+        # 更新进度条，显示当前视频的标记
+        self.update_progress_bar()
     
     def record_screen(self):
         while self.recording:
@@ -490,6 +525,11 @@ class ScreenRecorder:
         height = self.progress_canvas.winfo_height()
         if width == 0 or height == 0:
             return
+        
+        # 添加留白区域
+        padding = 20  # 左右留白的宽度
+        usable_width = width - 2 * padding
+        
         if self.video_duration > 0:
             progress = self.current_time / self.video_duration
         else:
@@ -498,12 +538,12 @@ class ScreenRecorder:
         # 绘制背景
         self.progress_canvas.create_rectangle(0, 0, width, height, fill="#333", outline="")
         
-        # 绘制进度条（在画布下方）
+        # 绘制进度条（在画布下方，考虑留白）
         progress_bar_y = height - 30
         progress_bar_height = 20
-        progress_width = int(width * progress)
-        self.progress_canvas.create_rectangle(0, progress_bar_y, width, progress_bar_y + progress_bar_height, fill="#444", outline="")
-        self.progress_canvas.create_rectangle(0, progress_bar_y, progress_width, progress_bar_y + progress_bar_height, fill="#4CAF50", outline="")
+        progress_width = int(usable_width * progress)
+        self.progress_canvas.create_rectangle(padding, progress_bar_y, width - padding, progress_bar_y + progress_bar_height, fill="#444", outline="")
+        self.progress_canvas.create_rectangle(padding, progress_bar_y, padding + progress_width, progress_bar_y + progress_bar_height, fill="#4CAF50", outline="")
         
         # 绘制黄色标记（在进度条上方）
         if self.recording or self.video_duration > 0:
@@ -525,9 +565,9 @@ class ScreenRecorder:
                     marker_time = marker["time"]
                     print(f"[调试] 标记时间: {marker_time:.2f}, 条件: {marker_time} <= {total_duration}")
                     if marker_time <= total_duration:
-                        marker_pos = (marker_time / total_duration) * width
+                        marker_pos = padding + (marker_time / total_duration) * usable_width
                         # 确保标记不会超出画布边界
-                        marker_pos = max(4, min(width - 4, marker_pos))
+                        marker_pos = max(padding + 4, min(width - padding - 4, marker_pos))
                         print(f"[调试] 绘制标记: 位置={marker_pos:.2f}, 时间={marker_time:.2f}, 画布宽度={width}")
                         marker_id = self.progress_canvas.create_oval(
                             marker_pos - 4, progress_bar_y - 10, marker_pos + 4, progress_bar_y,
@@ -551,9 +591,9 @@ class ScreenRecorder:
         if self.clip_mode and self.video_duration > 0:
             total_duration = self.video_duration
             if total_duration > 0:
-                # 计算开始和结束位置
-                start_pos = (self.clip_start / total_duration) * width
-                end_pos = (self.clip_end / total_duration) * width
+                # 计算开始和结束位置，考虑留白
+                start_pos = padding + (self.clip_start / total_duration) * usable_width
+                end_pos = padding + (self.clip_end / total_duration) * usable_width
                 
                 # 绘制截取区域
                 if start_pos < end_pos:
@@ -565,23 +605,28 @@ class ScreenRecorder:
                 # 绘制开始截取标识（长方形样式，在画布内）
                 rect_width = 50
                 rect_height = 120  # 长方形长度，确保在画布内显示
+                # 计算开始标记的位置，确保在画布范围内
+                start_rect_x1 = max(0, start_pos - rect_width // 2)
+                start_rect_x2 = min(width, start_pos + rect_width // 2)
                 # 绘制长方形（在画布上方，中心与进度条位置对齐）
                 self.clip_start_id = self.progress_canvas.create_rectangle(
-                    start_pos - rect_width // 2, 10,
-                    start_pos + rect_width // 2, 10 + rect_height,
+                    start_rect_x1, 10,
+                    start_rect_x2, 10 + rect_height,
                     fill="#4caf50", outline="#388e3c", width=2
                 )
-                # 添加开始位置文本（竖向排列4个字）
+                # 添加开始位置文本（竖向排列4个字，居中显示）
                 start_text_id = self.progress_canvas.create_text(
-                    start_pos - rect_width // 2 + 5, 10 + rect_height // 2,
+                    start_pos, 10 + rect_height // 2,
                     text="开\n始\n位\n置",
                     fill="white",
                     font=("Arial", 10, "bold"),
-                    anchor=tk.W
+                    anchor=tk.CENTER
                 )
-                # 创建一个透明的大区域用于点击
+                # 创建一个透明的大区域用于点击，确保在画布范围内
+                start_hitbox_x1 = max(0, start_pos - 30)
+                start_hitbox_x2 = min(width, start_pos + 30)
                 start_hitbox_id = self.progress_canvas.create_rectangle(
-                    start_pos - 30, 5, start_pos + 30, 15 + rect_height,
+                    start_hitbox_x1, 5, start_hitbox_x2, 15 + rect_height,
                     fill="", outline=""
                 )
                 
@@ -591,23 +636,28 @@ class ScreenRecorder:
                 self.progress_canvas.addtag_withtag("clip_start", start_hitbox_id)
                 
                 # 绘制结束截取标识（长方形样式，在画布内）
+                # 计算结束标记的位置，确保在画布范围内
+                end_rect_x1 = max(0, end_pos - rect_width // 2)
+                end_rect_x2 = min(width, end_pos + rect_width // 2)
                 # 绘制长方形（在画布上方，中心与进度条位置对齐）
                 self.clip_end_id = self.progress_canvas.create_rectangle(
-                    end_pos - rect_width // 2, 10,
-                    end_pos + rect_width // 2, 10 + rect_height,
+                    end_rect_x1, 10,
+                    end_rect_x2, 10 + rect_height,
                     fill="#f44336", outline="#d32f2f", width=2
                 )
-                # 添加结束位置文本（竖向排列4个字）
+                # 添加结束位置文本（竖向排列4个字，居中显示）
                 end_text_id = self.progress_canvas.create_text(
-                    end_pos - rect_width // 2 + 5, 10 + rect_height // 2,
+                    end_pos, 10 + rect_height // 2,
                     text="结\n束\n位\n置",
                     fill="white",
                     font=("Arial", 10, "bold"),
-                    anchor=tk.W
+                    anchor=tk.CENTER
                 )
-                # 创建一个透明的大区域用于点击
+                # 创建一个透明的大区域用于点击，确保在画布范围内
+                end_hitbox_x1 = max(0, end_pos - 30)
+                end_hitbox_x2 = min(width, end_pos + 30)
                 end_hitbox_id = self.progress_canvas.create_rectangle(
-                    end_pos - 30, 5, end_pos + 30, 15 + rect_height,
+                    end_hitbox_x1, 5, end_hitbox_x2, 15 + rect_height,
                     fill="", outline=""
                 )
                 
@@ -643,7 +693,7 @@ class ScreenRecorder:
                 self.progress_canvas.tag_raise("yellow_marker")
         
         # 最后绘制进度旋钮，确保它在所有元素之上
-        knob_x = progress_width
+        knob_x = padding + progress_width
         knob_id = self.progress_canvas.create_oval(
             knob_x - 8, progress_bar_y - 5, knob_x + 8, progress_bar_y + progress_bar_height + 5,
             fill="#fff", outline="#ddd", width=2
@@ -737,9 +787,16 @@ class ScreenRecorder:
         if self.dragging_clip_start and self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
-                # 计算新的开始位置
-                new_pos = max(0, min(event.x, width))
-                new_time = (new_pos / width) * self.video_duration
+                padding = 20
+                usable_width = width - 2 * padding
+                # 计算新的开始位置，考虑留白
+                if event.x < padding:
+                    new_pos = padding
+                elif event.x > width - padding:
+                    new_pos = width - padding
+                else:
+                    new_pos = event.x
+                new_time = ((new_pos - padding) / usable_width) * self.video_duration
                 # 确保开始位置小于结束位置
                 if new_time < self.clip_end:
                     self.clip_start = new_time
@@ -753,9 +810,16 @@ class ScreenRecorder:
         if self.dragging_clip_end and self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
-                # 计算新的结束位置
-                new_pos = max(0, min(event.x, width))
-                new_time = (new_pos / width) * self.video_duration
+                padding = 20
+                usable_width = width - 2 * padding
+                # 计算新的结束位置，考虑留白
+                if event.x < padding:
+                    new_pos = padding
+                elif event.x > width - padding:
+                    new_pos = width - padding
+                else:
+                    new_pos = event.x
+                new_time = ((new_pos - padding) / usable_width) * self.video_duration
                 # 确保结束位置大于开始位置
                 if new_time > self.clip_start:
                     self.clip_end = new_time
@@ -791,8 +855,16 @@ class ScreenRecorder:
         if self.clip_mode and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
-                # 计算拖动位置对应的时间
-                drag_time = (event.x / width) * self.video_duration
+                padding = 20
+                usable_width = width - 2 * padding
+                # 计算拖动位置对应的时间，限制在画布范围内
+                if event.x < padding:
+                    new_pos = padding
+                elif event.x > width - padding:
+                    new_pos = width - padding
+                else:
+                    new_pos = event.x
+                drag_time = ((new_pos - padding) / usable_width) * self.video_duration
                 
                 if self.dragging_clip_start and drag_time < self.clip_end:
                     self.clip_start = drag_time
@@ -1231,6 +1303,13 @@ class ScreenRecorder:
         frame_count = 0
         print(f"开始播放视频: {self.video_file}")
         
+        # 检查是否处于截取视频状态
+        if self.clip_mode and self.video_duration > 0:
+            # 设置视频起始位置为入点
+            start_pos_msec = self.clip_start * 1000
+            self.video_capture.set(cv2.CAP_PROP_POS_MSEC, start_pos_msec)
+            print(f"截取模式：从 {self.clip_start:.2f} 秒开始播放，到 {self.clip_end:.2f} 秒结束")
+        
         while self.video_playing and not self.stop_video:
             if not self.video_paused:
                 ret, frame = self.video_capture.read()
@@ -1240,6 +1319,12 @@ class ScreenRecorder:
                 # 获取当前播放位置（毫秒）并更新 current_time
                 current_pos_msec = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
                 self.current_time = current_pos_msec / 1000.0
+                
+                # 检查是否处于截取视频状态，如果是，检查是否到达出点
+                if self.clip_mode and self.video_duration > 0:
+                    if self.current_time > self.clip_end:
+                        print(f"[主页面] 到达出点 {self.clip_end:.2f} 秒，播放结束")
+                        break
                 
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame)
@@ -1300,8 +1385,18 @@ class ScreenRecorder:
                 self.progress_bar_dragging = True
                 width = self.progress_canvas.winfo_width()
                 if width > 0:
-                    position = max(0, min(1, event.x / width))
+                    padding = 20
+                    usable_width = width - 2 * padding
+                    # 计算点击位置，考虑留白
+                    if event.x < padding:
+                        position = 0
+                    elif event.x > width - padding:
+                        position = 1
+                    else:
+                        position = (event.x - padding) / usable_width
                     self.current_time = position * self.video_duration
+                    # 显示时间提示
+                    self.show_time_tooltip(event.x, event.y, self.current_time)
                     self.update_progress_bar()
                     self.update_time_label()
             else:
@@ -1312,8 +1407,18 @@ class ScreenRecorder:
         if self.progress_bar_dragging and self.video_duration > 0:
             width = self.progress_canvas.winfo_width()
             if width > 0:
-                position = max(0, min(1, event.x / width))
+                padding = 20
+                usable_width = width - 2 * padding
+                # 计算拖动位置，考虑留白
+                if event.x < padding:
+                    position = 0
+                elif event.x > width - padding:
+                    position = 1
+                else:
+                    position = (event.x - padding) / usable_width
                 self.current_time = position * self.video_duration
+                # 显示时间提示
+                self.show_time_tooltip(event.x, event.y, self.current_time)
                 self.update_progress_bar()
                 self.update_time_label()
     
@@ -1322,6 +1427,12 @@ class ScreenRecorder:
             self.progress_bar_dragging = False
             if self.video_playing and self.video_capture:
                 self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
+            # 销毁时间提示窗口
+            if hasattr(self, 'time_tooltip') and self.time_tooltip:
+                try:
+                    self.time_tooltip.destroy()
+                except:
+                    pass
     
     def show_notification(self, message, is_weak=False):
         if is_weak:
@@ -1355,103 +1466,171 @@ class ScreenRecorder:
                 ]
                 return canvas.create_polygon(points, **kwargs)
             
-            create_roundrectangle(canvas, 0, 0, 260, 80, 12, fill=self.light_bg, outline=self.border_color)
+            create_roundrectangle(canvas, 0, 0, 260, 80, 8, fill=self.light_bg, outline=self.accent_color)
             
-            # 添加消息文本
-            canvas.create_text(130, 40, text=message, fill=self.text_color, 
-                            font=('Arial', 11, 'bold'))
+            # 添加文本
+            canvas.create_text(130, 40, text=message, fill=self.text_color, font=('Arial', 10, 'bold'))
             
-            # 居中显示
-            screen_width = weak_notification.winfo_screenwidth()
-            screen_height = weak_notification.winfo_screenheight()
-            x = (screen_width - 260) // 2
-            y = screen_height - 120
+            # 计算位置，让通知显示在屏幕右下角
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            x = screen_width - 280
+            y = screen_height - 100
             weak_notification.geometry(f"260x80+{x}+{y}")
             
-            weak_notification.after(2000, weak_notification.destroy)
+            # 显示通知
+            weak_notification.deiconify()
+            
+            # 2秒后自动销毁
+            self.root.after(2000, lambda: weak_notification.destroy())
         else:
-            # 原有通知（用于标记编辑）
+            # 强提示，需要用户确认
             self.notification_label.config(text=message)
             self.notification.deiconify()
-            self.notification.after(3000, self.notification.withdraw)
     
     def open_marker_edit(self):
-        if self.current_marker_index >= 0 and self.current_marker_index < len(self.markers):
+        if 0 <= self.current_marker_index < len(self.markers):
             marker = self.markers[self.current_marker_index]
-            self.marker_name_var.set(marker["name"])
+            self.marker_name_var.set(marker.get("name", str(marker["id"])))
             self.marker_note_var.set(marker.get("note", ""))
             self.marker_edit_window.deiconify()
     
     def save_marker_edit(self):
-        if self.current_marker_index >= 0 and self.current_marker_index < len(self.markers):
-            self.markers[self.current_marker_index]["name"] = self.marker_name_var.get()
-            self.markers[self.current_marker_index]["note"] = self.marker_note_var.get()
+        if 0 <= self.current_marker_index < len(self.markers):
+            marker = self.markers[self.current_marker_index]
+            marker["name"] = self.marker_name_var.get() or str(marker["id"])
+            marker["note"] = self.marker_note_var.get()
             self.marker_edit_window.withdraw()
-            self.show_notification("标记已更新", is_weak=True)
-    
-    def format_time(self, seconds):
-        minutes = int(seconds // 60)
-        seconds = int(seconds % 60)
-        return f"{minutes:02d}:{seconds:02d}"
-    
-    def save_recording_path(self):
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            with open(os.path.join(current_dir, self.recordings_file), 'a', encoding='utf-8') as f:
-                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-                f.write(f"{timestamp} - {os.path.join(current_dir, self.video_file)}\n")
-        except Exception as e:
-            print(f"[ERROR] 保存录屏路径失败: {str(e)}", file=sys.stderr)
+            self.notification.withdraw()
     
     def create_mini_control(self):
         """创建缩略功能区"""
-        # 创建独立窗口，不使用主窗口作为父窗口
-        self.mini_window = tk.Toplevel()
+        # 检查是否已存在缩略功能区
+        if hasattr(self, 'mini_window') and self.mini_window:
+            try:
+                self.mini_window.destroy()
+            except:
+                pass
+        
+        # 创建缩略功能区窗口 - 作为完全独立的窗口
+        self.mini_window = tk.Toplevel()  # 不指定master，使其成为独立窗口
         self.mini_window.title("录屏控制")
-        self.mini_window.geometry("580x170")
-        self.mini_window.resizable(False, False)
+        self.mini_window.geometry("450x150")  # 增大窗口大小，确保能容纳所有内容
+        self.mini_window.attributes('-topmost', True)  # 始终显示在最前面
+        self.mini_window.attributes('-toolwindow', True)  # 工具窗口风格
+        self.mini_window.configure(bg="#1a1a1a")  # 直接使用颜色值，避免依赖主窗口
         
-        # 设置窗口始终在最前面
-        self.mini_window.attributes('-topmost', True)
-        self.mini_window.configure(bg=self.card_bg)
+        # 固定在屏幕顶部
+        self.mini_window.geometry("450x150+50+50")
         
-        # 创建状态标签
+        # 创建控制按钮
+        button_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
+        button_frame.pack(fill=tk.X, pady=20, padx=20)  # 增加边距
+        
+        # 创建按钮
+        self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10)
+        self.mini_pause_btn.pack(side=tk.LEFT, padx=10)  # 增加按钮间距
+        
+        self.mini_stop_btn = ttk.Button(button_frame, text="结束录屏", command=self.stop_recording, width=10)
+        self.mini_stop_btn.pack(side=tk.LEFT, padx=10)
+        
+        self.mini_mark_btn = ttk.Button(button_frame, text="标记进度", command=self.mark_progress, width=10)
+        self.mini_mark_btn.pack(side=tk.LEFT, padx=10)
+        
+        # 添加状态标签
         self.mini_status_label = tk.Label(self.mini_window, text="录屏中...", 
-                                         font=('Arial', 12, 'bold'), 
-                                         fg=self.success_color,
-                                         bg=self.card_bg)
-        self.mini_status_label.pack(pady=18)
+                                        font=('Arial', 10),  # 增大字体
+                                        bg="#1a1a1a", fg='green')
+        self.mini_status_label.pack(pady=15)
         
-        # 创建按钮框架
-        button_frame = tk.Frame(self.mini_window, bg=self.card_bg)
-        button_frame.pack(pady=18)
+        # 确保窗口显示在最前面
+        self.mini_window.update_idletasks()  # 强制更新窗口任务
+        self.mini_window.update()  # 强制更新窗口
+        self.mini_window.lift()
+        self.mini_window.focus_force()
+        self.mini_window.deiconify()
         
-        # 暂停按钮
-        self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", 
-                                       command=self.pause_recording, 
-                                       width=12,
-                                       style='Custom.TButton')
-        self.mini_pause_btn.pack(side=tk.LEFT, padx=12)
+        # 重写窗口关闭行为，确保点击关闭按钮时只是隐藏窗口，而不是销毁
+        def on_close():
+            self.mini_window.withdraw()
         
-        # 结束按钮
-        self.mini_stop_btn = ttk.Button(button_frame, text="结束录屏", 
-                                      command=self.stop_recording, 
-                                      width=12,
-                                      style='Danger.TButton')
-        self.mini_stop_btn.pack(side=tk.LEFT, padx=12)
-        
-        # 标记按钮
-        self.mini_mark_btn = ttk.Button(button_frame, text="标记进度", 
-                                      command=self.mark_progress, 
-                                      width=12,
-                                      style='Accent.TButton')
-        self.mini_mark_btn.pack(side=tk.LEFT, padx=12)
+        self.mini_window.protocol("WM_DELETE_WINDOW", on_close)
     
     def close_mini_control(self):
         """关闭缩略功能区"""
-        if self.mini_window:
-            self.mini_window.destroy()
-            self.mini_window = None
+        if hasattr(self, 'mini_window') and self.mini_window:
+            try:
+                self.mini_window.destroy()
+                self.mini_window = None
+            except:
+                pass
+    
+    def show_time_tooltip(self, x, y, time_seconds):
+        """显示时间提示"""
+        # 销毁之前的提示窗口
+        if hasattr(self, 'time_tooltip') and self.time_tooltip:
+            try:
+                self.time_tooltip.destroy()
+            except:
+                pass
+        
+        # 创建新的提示窗口
+        self.time_tooltip = tk.Toplevel(self.root)
+        self.time_tooltip.title("")
+        self.time_tooltip.geometry("80x30")
+        self.time_tooltip.transient(self.root)
+        self.time_tooltip.overrideredirect(True)  # 无标题栏
+        self.time_tooltip.attributes('-topmost', True)
+        self.time_tooltip.configure(bg="#333", relief="solid", borderwidth=1)
+        
+        # 格式化时间
+        time_str = self.format_time(time_seconds)
+        
+        # 创建标签
+        label = tk.Label(self.time_tooltip, text=time_str, 
+                        font=('Arial', 10), 
+                        bg="#333", fg="#fff")
+        label.pack(fill=tk.BOTH, expand=True, padx=5, pady=3)
+        
+        # 计算提示窗口位置
+        # 将坐标从canvas转换为屏幕坐标
+        canvas_x = self.progress_canvas.winfo_rootx() + x
+        canvas_y = self.progress_canvas.winfo_rooty() + y
+        
+        # 调整位置，使提示窗口显示在鼠标上方
+        tooltip_width = 80
+        tooltip_height = 30
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # 确保提示窗口在屏幕内
+        tooltip_x = canvas_x - tooltip_width // 2
+        tooltip_y = canvas_y - tooltip_height - 10
+        
+        if tooltip_x < 0:
+            tooltip_x = 0
+        elif tooltip_x + tooltip_width > screen_width:
+            tooltip_x = screen_width - tooltip_width
+        
+        if tooltip_y < 0:
+            tooltip_y = canvas_y + 10
+        
+        self.time_tooltip.geometry(f"{tooltip_width}x{tooltip_height}+{tooltip_x}+{tooltip_y}")
+    
+    def save_recording_path(self):
+        """保存录制路径到文件"""
+        if self.video_file:
+            try:
+                with open(self.recordings_file, 'a', encoding='utf-8') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {self.video_file}\n")
+            except Exception as e:
+                print(f"保存录制路径失败: {e}")
+    
+    def format_time(self, seconds):
+        """格式化时间为 MM:SS 格式"""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
 
 if __name__ == "__main__":
     from PIL import Image, ImageTk
