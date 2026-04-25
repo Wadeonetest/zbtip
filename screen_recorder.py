@@ -89,22 +89,23 @@ class ScreenRecorder:
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
-        # 主色调定义 - 剪映专业级深色主题
-        self.bg_color = "#0d0d0d"           # 深黑色背景
-        self.card_bg = "#1a1a1a"            # 卡片背景
-        self.light_bg = "#252525"           # 浅色背景
-        self.text_color = "#ffffff"         # 白色文字
-        self.secondary_text = "#999999"     # 次要文字
-        self.accent_color = "#ff6c37"       # 橙红色强调色（剪映主题色）
-        self.accent_hover = "#ff8560"       # 悬停色
-        self.success_color = "#4CAF50"      # 成功色
-        self.danger_color = "#f44336"       # 危险色
-        self.border_color = "#333333"       # 边框色
-        self.input_bg = "#2d2d2d"           # 输入框背景
+        # 主色调定义 - Trae黑色主题配绿色点缀
+        self.bg_color = "#1a1a1a"           # 深黑色背景
+        self.card_bg = "#252525"            # 深灰色卡片背景
+        self.light_bg = "#333333"           # 浅色背景
+        self.text_color = "#ffffff"          # 主文本颜色
+        self.secondary_text = "#b0b0b0"      # 次要文本颜色
+        self.accent_color = "#34a853"        # 强调色（Trae绿）
+        self.accent_hover = "#2d9249"       # 悬停色
+        self.success_color = "#34a853"        # 成功色
+        self.danger_color = "#ea4335"        # 危险色
+        self.border_color = "#404040"        # 边框色
+        self.input_bg = "#2d2d2d"            # 输入框背景
         
         # 配置主窗口
         self.root.configure(bg=self.bg_color)
-        self.root.option_add('*Font', 'Arial 9')
+        # 使用更现代的字体
+        self.root.option_add('*Font', ('Segoe UI', 9))
         
         # 配置样式
         # 框架样式
@@ -114,55 +115,56 @@ class ScreenRecorder:
         
         # LabelFrame样式
         self.style.configure('Custom.TLabelframe', background=self.card_bg,
-                           borderwidth=0, relief='flat')
+                           borderwidth=1, relief='solid', bordercolor=self.border_color)
         self.style.configure('Custom.TLabelframe.Label', background=self.card_bg,
-                           foreground=self.secondary_text)
+                           foreground=self.secondary_text, font=('Segoe UI', 10, 'bold'))
         
         # Label样式
         self.style.configure('Custom.TLabel', background=self.bg_color,
-                          foreground=self.text_color)
+                          foreground=self.text_color, font=('Segoe UI', 9))
         self.style.configure('Title.TLabel', background=self.card_bg,
-                          foreground=self.text_color)
+                          foreground=self.text_color, font=('Segoe UI', 12, 'bold'))
         self.style.configure('Small.TLabel', background=self.card_bg,
-                          foreground=self.secondary_text)
+                          foreground=self.secondary_text, font=('Segoe UI', 9))
         
         # 按钮基础样式
         self.style.configure('Custom.TButton',
                           background=self.light_bg,
                           foreground=self.text_color,
-                          font=('Arial', 9, 'bold'),
-                          padding=(16, 8),
-                          borderwidth=0,
-                          relief='flat',
+                          font=('Segoe UI', 9, 'bold'),
+                          padding=(14, 8),
+                          borderwidth=1,
+                          relief='solid',
+                          bordercolor=self.border_color,
                           focuscolor='none')
         self.style.map('Custom.TButton',
-                    background=[('active', '#303030'), ('pressed', '#202020')],
+                    background=[('active', '#4a4a4a'), ('pressed', '#3a3a3a')],
                     foreground=[('active', self.text_color)])
         
         # 强调按钮样式
         self.style.configure('Accent.TButton',
                           background=self.accent_color,
                           foreground='#ffffff',
-                          font=('Arial', 9, 'bold'),
-                          padding=(16, 8),
+                          font=('Segoe UI', 9, 'bold'),
+                          padding=(14, 8),
                           borderwidth=0,
-                          relief='flat',
+                          relief='solid',
                           focuscolor='none')
         self.style.map('Accent.TButton',
-                    background=[('active', self.accent_hover), ('pressed', '#e55b2d')],
+                    background=[('active', self.accent_hover), ('pressed', '#267340')],
                     foreground=[('active', '#ffffff')])
         
         # 危险按钮样式
         self.style.configure('Danger.TButton',
                           background=self.danger_color,
                           foreground='#ffffff',
-                          font=('Arial', 9, 'bold'),
-                          padding=(16, 8),
+                          font=('Segoe UI', 9, 'bold'),
+                          padding=(14, 8),
                           borderwidth=0,
-                          relief='flat',
+                          relief='solid',
                           focuscolor='none')
         self.style.map('Danger.TButton',
-                    background=[('active', '#ff6060'), ('pressed', '#d32f2f')],
+                    background=[('active', '#ff6b5b'), ('pressed', '#c5221f')],
                     foreground=[('active', '#ffffff')])
         
         # 输入框样式
@@ -172,25 +174,32 @@ class ScreenRecorder:
                           background=self.light_bg,
                           borderwidth=1,
                           relief='solid',
+                          bordercolor=self.border_color,
                           padding=4)
         self.style.map('Custom.TEntry',
-                    fieldbackground=[('focus', '#303030')])
+                    fieldbackground=[('focus', self.input_bg)],
+                    bordercolor=[('focus', self.accent_color)])
         
         # 控制栏 - 使用卡片式设计
-        self.control_frame = tk.Frame(self.root, bg=self.card_bg, padx=20, pady=16)
+        self.control_frame = tk.Frame(self.root, bg=self.card_bg, padx=24, pady=20)
         self.control_frame.pack(fill=tk.X, side=tk.TOP)
         
-        tk.Label(self.control_frame, text="屏幕录制工具", 
-                font=('Arial', 16, 'bold'),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        # 标题区域
+        title_frame = tk.Frame(self.control_frame, bg=self.card_bg)
+        title_frame.pack(side=tk.LEFT, fill=tk.Y, expand=True)
         
+        tk.Label(title_frame, text="屏幕录制工具", 
+                font=('Arial', 18, 'bold'),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT, anchor=tk.CENTER)
+        
+        # 按钮区域
         self.button_frame = tk.Frame(self.control_frame, bg=self.card_bg)
-        self.button_frame.pack(side=tk.RIGHT)
+        self.button_frame.pack(side=tk.RIGHT, fill=tk.Y)
         
         # 主按钮 - 使用grid布局固定位置
         self.start_btn = ttk.Button(self.button_frame, text="开始录屏", command=self.start_recording, 
                                   style='Accent.TButton')
-        self.start_btn.grid(row=0, column=0, padx=6, pady=2)
+        self.start_btn.grid(row=0, column=0, padx=8, pady=4)
         
         self.pause_btn = ttk.Button(self.button_frame, text="暂停录屏", command=self.pause_recording, 
                                   style='Custom.TButton')
@@ -204,38 +213,42 @@ class ScreenRecorder:
                                   style='Custom.TButton')
         # 初始状态隐藏
         
+        # 添加分隔符
+        separator = ttk.Separator(self.button_frame, orient=tk.VERTICAL)
+        separator.grid(row=0, column=3, padx=12, pady=4, sticky='ns')
+        
         self.clip_btn = ttk.Button(self.button_frame, text="截取视频", command=self.start_clip, 
                                   state=tk.DISABLED, style='Custom.TButton')
-        self.clip_btn.grid(row=0, column=4, padx=6, pady=2)
+        self.clip_btn.grid(row=0, column=4, padx=8, pady=4)
         
         self.finish_clip_btn = ttk.Button(self.button_frame, text="完成截取", command=self.finish_clip, 
                                          state=tk.DISABLED, style='Accent.TButton')
-        self.finish_clip_btn.grid(row=0, column=5, padx=6, pady=2)
+        self.finish_clip_btn.grid(row=0, column=5, padx=8, pady=4)
         
         # 录制记录按钮
         self.record_history_btn = ttk.Button(self.button_frame, text="录制记录", command=self.show_record_history, 
                                            style='Custom.TButton')
-        self.record_history_btn.grid(row=0, column=6, padx=6, pady=2)
+        self.record_history_btn.grid(row=0, column=6, padx=8, pady=4)
 
         # 主框架 - 使用Frame和pack布局
-        self.main_frame = tk.Frame(self.root, bg=self.bg_color)
+        self.main_frame = tk.Frame(self.root, bg=self.bg_color, padx=20, pady=20)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
         # 左侧框架
         self.left_frame = tk.Frame(self.main_frame, bg=self.bg_color)
-        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 16))
         
         # 右侧面板宽度
-        self.right_panel_width = 80
+        self.right_panel_width = 200
         
         # 右侧视频片段面板
-        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=12, style='Custom.TLabelframe')
+        self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=16, style='Custom.TLabelframe')
         self.right_frame.pack(side=tk.RIGHT, fill=tk.Y)
         self.right_frame.configure(width=self.right_panel_width)
         
         # 视频预览 - 卡片式设计
-        self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=12, style='Custom.TLabelframe')
-        self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
+        self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=16, style='Custom.TLabelframe')
+        self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 16))
         
         # 视频文件名区域框架
         filename_frame = tk.Frame(self.video_frame, bg=self.card_bg)
@@ -258,38 +271,54 @@ class ScreenRecorder:
         
         # 添加按钮悬停效果
         def on_rename_enter(e):
-            self.rename_btn.config(bg=self.accent_color)
+            # 平滑过渡到悬停颜色
+            for i in range(10):
+                alpha = i / 10
+                bg_color = f"#{int((1-alpha)*int(self.light_bg[1:3], 16) + alpha*int(self.accent_color[1:3], 16)):02x}{int((1-alpha)*int(self.light_bg[3:5], 16) + alpha*int(self.accent_color[3:5], 16)):02x}{int((1-alpha)*int(self.light_bg[5:7], 16) + alpha*int(self.accent_color[5:7], 16)):02x}"
+                self.rename_btn.config(bg=bg_color)
+                self.root.update()
+                self.root.after(10)
         def on_rename_leave(e):
-            self.rename_btn.config(bg=self.light_bg)
+            # 平滑过渡到原始颜色
+            for i in range(10):
+                alpha = i / 10
+                bg_color = f"#{int(alpha*int(self.light_bg[1:3], 16) + (1-alpha)*int(self.accent_color[1:3], 16)):02x}{int(alpha*int(self.light_bg[3:5], 16) + (1-alpha)*int(self.accent_color[3:5], 16)):02x}{int(alpha*int(self.light_bg[5:7], 16) + (1-alpha)*int(self.accent_color[5:7], 16)):02x}"
+                self.rename_btn.config(bg=bg_color)
+                self.root.update()
+                self.root.after(10)
         self.rename_btn.bind("<Enter>", on_rename_enter)
         self.rename_btn.bind("<Leave>", on_rename_leave)
         
         # 视频画布 - 圆角边框效果
-        self.canvas = tk.Canvas(self.video_frame, bg="#0a0a0a", 
-                              highlightthickness=1, highlightbackground="#2a2a2a")
+        self.canvas = tk.Canvas(self.video_frame, bg="#151515", 
+                              highlightthickness=1, highlightbackground=self.border_color)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
         # 视频控制栏
         video_controls = tk.Frame(self.video_frame, bg=self.card_bg)
-        video_controls.pack(fill=tk.X, pady=(10, 0))
+        video_controls.pack(fill=tk.X, pady=(16, 0))
         
-        self.play_btn = ttk.Button(video_controls, text="播放", command=self.play_video, 
+        # 播放/暂停按钮
+        button_frame = tk.Frame(video_controls, bg=self.card_bg)
+        button_frame.pack(side=tk.LEFT, fill=tk.Y)
+        
+        self.play_btn = ttk.Button(button_frame, text="播放", command=self.play_video, 
                                   state=tk.DISABLED, style='Custom.TButton')
-        self.play_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.play_btn.pack(side=tk.LEFT, padx=(0, 12))
         
-        self.pause_video_btn = ttk.Button(video_controls, text="暂停", command=self.pause_video, 
+        self.pause_video_btn = ttk.Button(button_frame, text="暂停", command=self.pause_video, 
                                         state=tk.DISABLED, style='Custom.TButton')
         self.pause_video_btn.pack(side=tk.LEFT)
         
         # 进度条区域 - 卡片式设计
-        self.progress_frame = ttk.LabelFrame(self.left_frame, text="进度", padding=12, style='Custom.TLabelframe')
+        self.progress_frame = ttk.LabelFrame(self.left_frame, text="进度", padding=16, style='Custom.TLabelframe')
         self.progress_frame.pack(fill=tk.X)
         
         # 进度画布
-        self.progress_canvas = tk.Canvas(self.progress_frame, height=120, bg="#151515", 
+        self.progress_canvas = tk.Canvas(self.progress_frame, height=120, bg=self.card_bg, 
                                       cursor="hand1", highlightthickness=1, 
-                                      highlightbackground="#2a2a2a")
-        self.progress_canvas.pack(fill=tk.X, pady=(8, 0))
+                                      highlightbackground=self.border_color)
+        self.progress_canvas.pack(fill=tk.X, pady=(12, 0))
         self.progress_canvas.bind('<Button-1>', self.on_progress_click)
         self.progress_canvas.bind('<B1-Motion>', self.on_progress_drag)
         self.progress_canvas.bind('<ButtonRelease-1>', self.on_progress_release)
@@ -298,29 +327,30 @@ class ScreenRecorder:
         self.time_label = tk.Label(self.progress_frame, text="00:00 / 00:00", 
                                   font=('Arial', 9),
                                   bg=self.card_bg, fg=self.secondary_text)
-        self.time_label.pack(side=tk.RIGHT, pady=(8, 0))
+        self.time_label.pack(side=tk.RIGHT, pady=(12, 0))
         
         # 片段列表
         self.clip_listbox = tk.Listbox(self.right_frame, 
                                      height=20, 
-                                     width=35,  # 缩小宽度
-                                     bg="#151515", 
+                                     width=35, 
+                                     bg=self.card_bg, 
                                      fg=self.text_color, 
                                      highlightthickness=1, 
-                                     highlightbackground="#2a2a2a",
-                                     selectbackground=self.accent_color,
-                                     selectforeground="white",
+                                     highlightbackground=self.accent_color,
+                                     selectbackground=self.light_bg,
+                                     selectforeground=self.text_color,
                                      font=('Arial', 9),
-                                     bd=0, relief='flat',
+                                     bd=1, 
+                                     relief='solid',
                                      activestyle='none')
-        self.clip_listbox.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.clip_listbox.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
         
         # 片段控制按钮
         clip_buttons = tk.Frame(self.right_frame, bg=self.card_bg)
-        clip_buttons.pack(fill=tk.X, pady=(10, 0))
+        clip_buttons.pack(fill=tk.X, pady=(16, 0))
         
         ttk.Button(clip_buttons, text="播放选中", command=self.play_selected_clip, 
-                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 8))
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(clip_buttons, text="删除片段", command=self.delete_selected_clip, 
                   style='Danger.TButton').pack(side=tk.LEFT)
         # 通知窗口
@@ -1998,6 +2028,10 @@ class ScreenRecorder:
                         record_content = f"主视频: {current_filename} - 截取: {clip_count}个"
                         history_tree.insert('', tk.END, values=(formatted_time, record_content))
                         session_paths.append(session_path)
+        
+        # 滚动到最下面（显示最新记录）
+        if history_tree.get_children():
+            history_tree.see(history_tree.get_children()[-1])
         
         # 打开按钮
         def open_selected_record():
