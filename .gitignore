@@ -1,0 +1,16 @@
+*.avi
+*.mp4
+*.jpg
+*.jpeg
+*.png
+recordings.txt
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
