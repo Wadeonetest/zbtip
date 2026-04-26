@@ -74,6 +74,7 @@ class ScreenRecorder:
         self.recordings_file = "recordings.txt"
         self.progress_knob_id = None
         self.progress_bar_dragging = False
+        self.video_lock = threading.Lock()  # 视频操作锁，防止多线程冲突
         
         # 存储每个视频文件对应的标记列表
         self.video_markers = {}
@@ -484,6 +485,46 @@ class ScreenRecorder:
                                   font=('Arial', 9),
                                   bg=self.card_bg, fg=self.secondary_text)
         self.time_label.pack(side=tk.RIGHT, pady=(12, 0))
+        
+        # 常驻提示区域
+        self.hints_frame = tk.Frame(self.progress_frame, bg=self.card_bg)
+        self.hints_frame.pack(fill=tk.X, pady=(12, 0))
+        
+        # 进度旋钮提示
+        self.knob_hint_frame = tk.Frame(self.hints_frame, bg=self.card_bg)
+        self.knob_hint_frame.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        self.knob_hint_label = tk.Label(self.knob_hint_frame, text="进度: 00:00:00", 
+                                       bg=self.card_bg, fg=self.text_color, font=('Segoe UI', 9))
+        self.knob_hint_label.pack(side=tk.LEFT, padx=5)
+        self.knob_hint_entry = ttk.Entry(self.knob_hint_frame, width=15, style='Custom.TEntry')
+        self.knob_hint_entry.pack(side=tk.LEFT, padx=5)
+        self.knob_hint_entry.bind('<Return>', self.on_knob_hint_change)
+        self.knob_hint_entry.bind('<FocusIn>', lambda e: self.knob_hint_frame.configure(cursor='ibeam'))
+        self.knob_hint_entry.bind('<FocusOut>', lambda e: self.knob_hint_frame.configure(cursor=''))
+        
+        # 入点提示
+        self.in_point_hint_frame = tk.Frame(self.hints_frame, bg=self.card_bg)
+        self.in_point_hint_frame.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        self.in_point_hint_label = tk.Label(self.in_point_hint_frame, text="截取入点: 00:00:00", 
+                                          bg=self.card_bg, fg=self.text_color, font=('Segoe UI', 9))
+        self.in_point_hint_label.pack(side=tk.LEFT, padx=5)
+        self.in_point_hint_entry = ttk.Entry(self.in_point_hint_frame, width=15, style='Custom.TEntry')
+        self.in_point_hint_entry.pack(side=tk.LEFT, padx=5)
+        self.in_point_hint_entry.bind('<Return>', self.on_in_point_hint_change)
+        self.in_point_hint_entry.bind('<FocusIn>', lambda e: self.in_point_hint_frame.configure(cursor='ibeam'))
+        self.in_point_hint_entry.bind('<FocusOut>', lambda e: self.in_point_hint_frame.configure(cursor=''))
+        
+        # 出点提示
+        self.out_point_hint_frame = tk.Frame(self.hints_frame, bg=self.card_bg)
+        self.out_point_hint_frame.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        self.out_point_hint_label = tk.Label(self.out_point_hint_frame, text="截取出点: 00:00:00", 
+                                           bg=self.card_bg, fg=self.text_color, font=('Segoe UI', 9))
+        self.out_point_hint_label.pack(side=tk.LEFT, padx=5)
+        self.out_point_hint_entry = ttk.Entry(self.out_point_hint_frame, width=15, style='Custom.TEntry')
+        self.out_point_hint_entry.pack(side=tk.LEFT, padx=5)
+        self.out_point_hint_entry.bind('<Return>', self.on_out_point_hint_change)
+        self.out_point_hint_entry.bind('<FocusIn>', lambda e: self.out_point_hint_frame.configure(cursor='ibeam'))
+        self.out_point_hint_entry.bind('<FocusOut>', lambda e: self.out_point_hint_frame.configure(cursor=''))
         
         # 片段列表
         clip_list_frame = tk.Frame(self.right_frame)
@@ -1382,10 +1423,10 @@ class ScreenRecorder:
                     start_rect_x2, 10 + rect_height,
                     fill="#4caf50", outline="#388e3c", width=2
                 )
-                # 添加开始位置文本（竖向排列4个字，居中显示）
+                # 添加截取入点文本（竖向排列4个字，居中显示）
                 start_text_id = self.progress_canvas.create_text(
                     start_pos, 10 + rect_height // 2,
-                    text="开\n始\n位\n置",
+                    text="截\n取\n入\n点",
                     fill="white",
                     font=("Arial", 10, "bold"),
                     anchor=tk.CENTER
@@ -1413,10 +1454,10 @@ class ScreenRecorder:
                     end_rect_x2, 10 + rect_height,
                     fill="#f44336", outline="#d32f2f", width=2
                 )
-                # 添加结束位置文本（竖向排列4个字，居中显示）
+                # 添加截取出点文本（竖向排列4个字，居中显示）
                 end_text_id = self.progress_canvas.create_text(
                     end_pos, 10 + rect_height // 2,
-                    text="结\n束\n位\n置",
+                    text="截\n取\n出\n点",
                     fill="white",
                     font=("Arial", 10, "bold"),
                     anchor=tk.CENTER
@@ -1495,6 +1536,8 @@ class ScreenRecorder:
         else:
             total = self.format_time(self.video_duration)
         self.time_label.config(text=f"{current} / {total}")
+        # 更新提示信息
+        self.update_hints()
     
     def mark_progress(self):
         if self.recording or self.video_file:
@@ -1638,6 +1681,8 @@ class ScreenRecorder:
                 if new_time < self.clip_end:
                     self.clip_start = new_time
                     self.update_progress_bar()
+                    # 更新提示信息
+                    self.update_hints()
     
     def on_clip_end_click(self, event):
         print(f"结束标记点击事件触发，坐标: ({event.x}, {event.y})")
@@ -1661,6 +1706,8 @@ class ScreenRecorder:
                 if new_time > self.clip_start:
                     self.clip_end = new_time
                     self.update_progress_bar()
+                    # 更新提示信息
+                    self.update_hints()
     
     def on_clip_release(self, event):
         print(f"释放事件触发，坐标: ({event.x}, {event.y})")
@@ -2015,11 +2062,15 @@ class ScreenRecorder:
         total_clip_frames = end_frame - start_frame + 1
         print(f"剪辑总帧数: {total_clip_frames}")
         
-        # 格式化时间函数
+        # 格式化时间函数（支持小时）
         def format_time(seconds):
-            minutes = int(seconds // 60)
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
             secs = int(seconds % 60)
-            return f"{minutes:02d}:{secs:02d}"
+            if hours > 0:
+                return f"{hours:02d}:{mins:02d}:{secs:02d}"
+            else:
+                return f"{mins:02d}:{secs:02d}"
         
         # 检查循环条件
         print(f"循环前检查: current_frame={current_frame}, end_frame={end_frame}, stop_video={self.stop_video}")
@@ -2253,18 +2304,22 @@ class ScreenRecorder:
         if self.clip_mode and self.video_duration > 0:
             # 设置视频起始位置为入点
             start_pos_msec = self.clip_start * 1000
-            self.video_capture.set(cv2.CAP_PROP_POS_MSEC, start_pos_msec)
+            with self.video_lock:
+                self.video_capture.set(cv2.CAP_PROP_POS_MSEC, start_pos_msec)
             print(f"截取模式：从 {self.clip_start:.2f} 秒开始播放，到 {self.clip_end:.2f} 秒结束")
         
         while self.video_playing and not self.stop_video:
             if not self.video_paused:
-                ret, frame = self.video_capture.read()
-                if not ret:
-                    print(f"[主页面] 读取帧失败，播放结束")
-                    break
-                # 获取当前播放位置（毫秒）并更新 current_time
-                current_pos_msec = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
-                self.current_time = current_pos_msec / 1000.0
+                with self.video_lock:
+                    ret, frame = self.video_capture.read()
+                    if not ret:
+                        print(f"[主页面] 读取帧失败，播放结束")
+                        break
+                    # 获取当前播放位置（毫秒）并更新 current_time
+                    current_pos_msec = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
+                # 只在不在拖动进度条时更新 current_time
+                if not self.progress_bar_dragging:
+                    self.current_time = current_pos_msec / 1000.0
                 
                 # 检查是否处于截取视频状态，如果是，检查是否到达出点
                 if self.clip_mode and self.video_duration > 0:
@@ -2310,7 +2365,8 @@ class ScreenRecorder:
         print(f"[主页面] 播放循环结束，frame_count={frame_count}")
         
         if self.video_capture:
-            self.video_capture.release()
+            with self.video_lock:
+                self.video_capture.release()
             self.video_capture = None
         self.video_playing = False
         self.play_btn.config(state=tk.NORMAL)
@@ -2375,18 +2431,170 @@ class ScreenRecorder:
                 self.show_time_tooltip(event.x, event.y, self.current_time)
                 self.update_progress_bar()
                 self.update_time_label()
+                # 同步视频位置到拖动位置
+                with self.video_lock:
+                    if self.video_playing and self.video_capture:
+                        self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
     
     def on_progress_release(self, event):
         if self.progress_bar_dragging:
             self.progress_bar_dragging = False
-            if self.video_playing and self.video_capture:
-                self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
+            with self.video_lock:
+                if self.video_playing and self.video_capture:
+                    self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
             # 销毁时间提示窗口
             if hasattr(self, 'time_tooltip') and self.time_tooltip:
                 try:
                     self.time_tooltip.destroy()
                 except:
                     pass
+            # 更新提示信息
+            self.update_hints()
+    
+    def update_hints(self):
+        """更新常驻提示信息"""
+        # 格式化时间（支持小时）
+        def format_time(seconds):
+            if seconds < 0:
+                seconds = 0
+            if self.video_duration > 0 and seconds > self.video_duration:
+                seconds = self.video_duration
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            if hours > 0:
+                return f"{hours:02d}:{mins:02d}:{secs:02d}"
+            else:
+                return f"{mins:02d}:{secs:02d}"
+        
+        # 更新进度旋钮提示
+        knob_time = format_time(self.current_time)
+        if hasattr(self, 'knob_hint_label'):
+            self.knob_hint_label.config(text=f"进度: {knob_time}")
+        if hasattr(self, 'knob_hint_entry'):
+            self.knob_hint_entry.delete(0, tk.END)
+            self.knob_hint_entry.insert(0, knob_time)
+        
+        # 更新入点提示
+        in_point_time = format_time(self.clip_start)
+        if hasattr(self, 'in_point_hint_label'):
+            self.in_point_hint_label.config(text=f"截取入点: {in_point_time}")
+        if hasattr(self, 'in_point_hint_entry'):
+            self.in_point_hint_entry.delete(0, tk.END)
+            self.in_point_hint_entry.insert(0, in_point_time)
+        
+        # 更新出点提示
+        out_point_time = format_time(self.clip_end)
+        if hasattr(self, 'out_point_hint_label'):
+            self.out_point_hint_label.config(text=f"截取出点: {out_point_time}")
+        if hasattr(self, 'out_point_hint_entry'):
+            self.out_point_hint_entry.delete(0, tk.END)
+            self.out_point_hint_entry.insert(0, out_point_time)
+    
+    def on_knob_hint_change(self, event):
+        """进度旋钮提示变化"""
+        try:
+            # 解析时间输入（支持HH:MM:SS和MM:SS格式）
+            time_str = self.knob_hint_entry.get().strip()
+            if ':' in time_str:
+                parts = time_str.split(':')
+                if len(parts) == 3:
+                    # HH:MM:SS格式
+                    hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
+                    new_time = hours * 3600 + mins * 60 + secs
+                else:
+                    # MM:SS格式
+                    mins, secs = int(parts[0]), int(parts[1])
+                    new_time = mins * 60 + secs
+            else:
+                new_time = int(time_str)
+            
+            # 验证时间范围
+            if new_time < 0:
+                new_time = 0
+            if self.video_duration > 0 and new_time > self.video_duration:
+                new_time = self.video_duration
+            
+            # 更新当前时间
+            self.current_time = new_time
+            self.update_progress_bar()
+            self.update_hints()
+            
+            # 更新时间标签
+            current_time_str = self.format_time(self.current_time)
+            total_time_str = self.format_time(self.video_duration)
+            self.time_label.config(text=f"{current_time_str} / {total_time_str}")
+            
+        except ValueError:
+            pass
+    
+    def on_in_point_hint_change(self, event):
+        """入点提示变化"""
+        try:
+            # 解析时间输入（支持HH:MM:SS和MM:SS格式）
+            time_str = self.in_point_hint_entry.get().strip()
+            if ':' in time_str:
+                parts = time_str.split(':')
+                if len(parts) == 3:
+                    # HH:MM:SS格式
+                    hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
+                    new_time = hours * 3600 + mins * 60 + secs
+                else:
+                    # MM:SS格式
+                    mins, secs = int(parts[0]), int(parts[1])
+                    new_time = mins * 60 + secs
+            else:
+                new_time = int(time_str)
+            
+            # 验证时间范围
+            if new_time < 0:
+                new_time = 0
+            if self.video_duration > 0 and new_time > self.video_duration:
+                new_time = self.video_duration
+            if new_time > self.clip_end:
+                new_time = self.clip_end
+            
+            # 更新入点
+            self.clip_start = new_time
+            self.update_progress_bar()
+            self.update_hints()
+            
+        except ValueError:
+            pass
+    
+    def on_out_point_hint_change(self, event):
+        """出点提示变化"""
+        try:
+            # 解析时间输入（支持HH:MM:SS和MM:SS格式）
+            time_str = self.out_point_hint_entry.get().strip()
+            if ':' in time_str:
+                parts = time_str.split(':')
+                if len(parts) == 3:
+                    # HH:MM:SS格式
+                    hours, mins, secs = int(parts[0]), int(parts[1]), int(parts[2])
+                    new_time = hours * 3600 + mins * 60 + secs
+                else:
+                    # MM:SS格式
+                    mins, secs = int(parts[0]), int(parts[1])
+                    new_time = mins * 60 + secs
+            else:
+                new_time = int(time_str)
+            
+            # 验证时间范围
+            if new_time < 0:
+                new_time = 0
+            if self.video_duration > 0 and new_time > self.video_duration:
+                new_time = self.video_duration
+            if new_time < self.clip_start:
+                new_time = self.clip_start
+            
+            # 更新出点
+            self.clip_end = new_time
+            self.update_progress_bar()
+            self.update_hints()
+            
+        except ValueError:
+            pass
     
     def show_notification(self, message, is_weak=False, parent=None):
         if is_weak:
@@ -3178,10 +3386,14 @@ class ScreenRecorder:
                 print(f"保存录制路径失败: {e}")
     
     def format_time(self, seconds):
-        """格式化时间为 MM:SS 格式"""
-        minutes = int(seconds // 60)
+        """格式化时间（支持小时显示）"""
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
         secs = int(seconds % 60)
-        return f"{minutes:02d}:{secs:02d}"
+        if hours > 0:
+            return f"{hours:02d}:{mins:02d}:{secs:02d}"
+        else:
+            return f"{mins:02d}:{secs:02d}"
 
 if __name__ == "__main__":
     from PIL import Image, ImageTk
