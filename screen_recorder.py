@@ -236,6 +236,11 @@ class ScreenRecorder:
         self.record_history_btn = ttk.Button(self.button_frame, text="录制记录", command=self.show_record_history, 
                                            style='Custom.TButton')
         self.record_history_btn.grid(row=0, column=6, padx=8, pady=4)
+        
+        # 视频资料库按钮
+        self.video_library_btn = ttk.Button(self.button_frame, text="视频资料库", command=self.show_video_library, 
+                                           style='Custom.TButton')
+        self.video_library_btn.grid(row=0, column=7, padx=8, pady=4)
 
         # 主框架 - 使用Frame和pack布局
         self.main_frame = tk.Frame(self.root, bg=self.bg_color, padx=20, pady=20)
@@ -252,6 +257,55 @@ class ScreenRecorder:
         self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=16, style='Custom.TLabelframe')
         self.right_frame.pack(side=tk.RIGHT, fill=tk.Y)
         self.right_frame.configure(width=self.right_panel_width)
+        
+        # 视频资料库面板
+        self.library_frame = ttk.LabelFrame(self.main_frame, text="视频资料库", padding=16, style='Custom.TLabelframe')
+        self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        self.library_frame.pack_forget()  # 初始隐藏
+        
+        # 视频资料库搜索框
+        search_frame = tk.Frame(self.library_frame, bg=self.card_bg)
+        search_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.library_search_var = tk.StringVar()
+        self.library_search_entry = ttk.Entry(search_frame, textvariable=self.library_search_var, style='Custom.TEntry')
+        self.library_search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.library_search_entry.bind("<FocusIn>", self.show_folder_structure)
+        self.library_search_entry.bind("<KeyRelease>", self.search_files)
+        
+        ttk.Button(search_frame, text="搜索", command=self.search_files, style='Custom.TButton').pack(side=tk.RIGHT)
+        
+        # 文件夹树状结构
+        self.folder_tree = ttk.Treeview(self.library_frame, style='Custom.Treeview')
+        self.folder_tree.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.folder_tree.bind("<Double-1>", self.open_selected_folder)
+        
+        # 文件列表
+        self.file_listbox = tk.Listbox(self.library_frame, 
+                                     height=10, 
+                                     bg=self.card_bg, 
+                                     fg=self.text_color, 
+                                     highlightthickness=1, 
+                                     highlightbackground=self.accent_color,
+                                     selectbackground=self.light_bg,
+                                     selectforeground=self.text_color,
+                                     font=('Arial', 9),
+                                     bd=1, 
+                                     relief='solid',
+                                     activestyle='none')
+        self.file_listbox.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # 资料库控制按钮
+        library_buttons = tk.Frame(self.library_frame, bg=self.card_bg)
+        library_buttons.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Button(library_buttons, text="新建文件夹", command=self.create_new_folder, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(library_buttons, text="新建文件", command=self.create_new_file, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(library_buttons, text="重命名", command=self.rename_selected_item, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(library_buttons, text="删除", command=self.delete_selected_item, style='Danger.TButton').pack(side=tk.LEFT)
+        
+        # 关闭资料库按钮
+        ttk.Button(self.library_frame, text="关闭资料库", command=self.hide_video_library, style='Custom.TButton').pack(fill=tk.X)
         
         # 视频预览 - 卡片式设计
         self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=16, style='Custom.TLabelframe')
@@ -2490,6 +2544,337 @@ class ScreenRecorder:
         
         close_btn = ttk.Button(button_frame, text="关闭", command=history_window.destroy, style='Custom.TButton')
         close_btn.pack(side=tk.RIGHT, padx=5)
+    
+    def show_video_library(self):
+        """显示视频资料库"""
+        # 隐藏视频片段面板
+        self.right_frame.pack_forget()
+        # 显示视频资料库面板
+        self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        # 初始化文件夹结构
+        self.init_folder_structure()
+    
+    def hide_video_library(self):
+        """隐藏视频资料库"""
+        # 隐藏视频资料库面板
+        self.library_frame.pack_forget()
+        # 显示视频片段面板
+        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.right_frame.configure(width=self.right_panel_width)
+    
+    def init_folder_structure(self):
+        """初始化文件夹结构"""
+        # 清空树状结构
+        for item in self.folder_tree.get_children():
+            self.folder_tree.delete(item)
+        
+        # 添加根节点
+        root_id = self.folder_tree.insert('', tk.END, text="视频资料库", open=True)
+        
+        # 添加recordings目录
+        if os.path.exists(self.recordings_dir):
+            recordings_id = self.folder_tree.insert(root_id, tk.END, text=self.recordings_dir, open=True)
+            # 添加recordings下的子目录
+            for item in os.listdir(self.recordings_dir):
+                item_path = os.path.join(self.recordings_dir, item)
+                if os.path.isdir(item_path):
+                    self.folder_tree.insert(recordings_id, tk.END, text=item, values=[item_path])
+    
+    def show_folder_structure(self, event=None):
+        """显示文件夹层级结构"""
+        self.init_folder_structure()
+    
+    def search_files(self, event=None):
+        """搜索文件和文件夹"""
+        keyword = self.library_search_var.get().strip()
+        if not keyword:
+            # 清空文件列表
+            self.file_listbox.delete(0, tk.END)
+            return
+        
+        # 清空文件列表
+        self.file_listbox.delete(0, tk.END)
+        
+        # 搜索文件和文件夹
+        results = []
+        if os.path.exists(self.recordings_dir):
+            for root, dirs, files in os.walk(self.recordings_dir):
+                # 搜索文件夹
+                for dir_name in dirs:
+                    if keyword in dir_name:
+                        results.append((os.path.join(root, dir_name), "文件夹"))
+                # 搜索文件
+                for file_name in files:
+                    if keyword in file_name:
+                        results.append((os.path.join(root, file_name), "文件"))
+        
+        # 添加搜索结果到文件列表
+        for path, type_ in results:
+            display_name = os.path.basename(path)
+            self.file_listbox.insert(tk.END, f"[{type_}] {display_name}")
+    
+    def open_selected_folder(self, event=None):
+        """打开选中的文件夹"""
+        selected_item = self.folder_tree.selection()
+        if selected_item:
+            item = selected_item[0]
+            values = self.folder_tree.item(item, 'values')
+            if values:
+                folder_path = values[0]
+                if os.path.exists(folder_path) and os.path.isdir(folder_path):
+                    # 打开文件夹
+                    if os.name == 'nt':
+                        os.startfile(folder_path)
+                    else:
+                        subprocess.call(['open', folder_path])
+    
+    def create_new_folder(self):
+        """新建文件夹"""
+        # 获取当前选中的文件夹
+        selected_item = self.folder_tree.selection()
+        if not selected_item:
+            # 默认在recordings目录下创建
+            parent_path = self.recordings_dir
+        else:
+            item = selected_item[0]
+            values = self.folder_tree.item(item, 'values')
+            if values:
+                parent_path = values[0]
+            else:
+                parent_path = self.recordings_dir
+        
+        # 创建文件夹名称输入窗口
+        def create_folder():
+            folder_name = folder_var.get().strip()
+            if folder_name:
+                folder_path = os.path.join(parent_path, folder_name)
+                if not os.path.exists(folder_path):
+                    try:
+                        os.makedirs(folder_path)
+                        # 更新文件夹结构
+                        self.init_folder_structure()
+                        self.show_notification("文件夹创建成功", is_weak=True)
+                    except Exception as e:
+                        messagebox.showerror("错误", f"创建文件夹失败: {str(e)}")
+                else:
+                    messagebox.showerror("错误", "文件夹已存在")
+            window.destroy()
+        
+        window = tk.Toplevel(self.root)
+        window.title("新建文件夹")
+        window.geometry("300x100")
+        window.resizable(False, False)
+        window.attributes('-topmost', True)
+        
+        tk.Label(window, text="文件夹名称：").pack(pady=10)
+        folder_var = tk.StringVar()
+        entry = ttk.Entry(window, textvariable=folder_var)
+        entry.pack(fill=tk.X, padx=20, pady=5)
+        entry.focus()
+        
+        button_frame = tk.Frame(window)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="确定", command=create_folder).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+    
+    def create_new_file(self):
+        """新建文件"""
+        # 获取当前选中的文件夹
+        selected_item = self.folder_tree.selection()
+        if not selected_item:
+            # 默认在recordings目录下创建
+            parent_path = self.recordings_dir
+        else:
+            item = selected_item[0]
+            values = self.folder_tree.item(item, 'values')
+            if values:
+                parent_path = values[0]
+            else:
+                parent_path = self.recordings_dir
+        
+        # 创建文件名称输入窗口
+        def create_file():
+            file_name = file_var.get().strip()
+            if file_name:
+                if not file_name.endswith('.avi'):
+                    file_name += '.avi'
+                file_path = os.path.join(parent_path, file_name)
+                if not os.path.exists(file_path):
+                    try:
+                        # 创建空文件
+                        open(file_path, 'w').close()
+                        # 更新文件列表
+                        self.search_files()
+                        self.show_notification("文件创建成功", is_weak=True)
+                    except Exception as e:
+                        messagebox.showerror("错误", f"创建文件失败: {str(e)}")
+                else:
+                    messagebox.showerror("错误", "文件已存在")
+            window.destroy()
+        
+        window = tk.Toplevel(self.root)
+        window.title("新建文件")
+        window.geometry("300x100")
+        window.resizable(False, False)
+        window.attributes('-topmost', True)
+        
+        tk.Label(window, text="文件名称：").pack(pady=10)
+        file_var = tk.StringVar()
+        entry = ttk.Entry(window, textvariable=file_var)
+        entry.pack(fill=tk.X, padx=20, pady=5)
+        entry.focus()
+        
+        button_frame = tk.Frame(window)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="确定", command=create_file).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+    
+    def rename_selected_item(self):
+        """重命名选中的项目"""
+        # 检查是否选中了文件夹
+        selected_folder = self.folder_tree.selection()
+        if selected_folder:
+            item = selected_folder[0]
+            values = self.folder_tree.item(item, 'values')
+            if values:
+                old_path = values[0]
+                old_name = os.path.basename(old_path)
+                
+                # 创建重命名窗口
+                def rename_item():
+                    new_name = name_var.get().strip()
+                    if new_name and new_name != old_name:
+                        new_path = os.path.join(os.path.dirname(old_path), new_name)
+                        if not os.path.exists(new_path):
+                            try:
+                                os.rename(old_path, new_path)
+                                # 更新文件夹结构
+                                self.init_folder_structure()
+                                self.show_notification("重命名成功", is_weak=True)
+                            except Exception as e:
+                                messagebox.showerror("错误", f"重命名失败: {str(e)}")
+                        else:
+                            messagebox.showerror("错误", "名称已存在")
+                    window.destroy()
+                
+                window = tk.Toplevel(self.root)
+                window.title("重命名")
+                window.geometry("300x100")
+                window.resizable(False, False)
+                window.attributes('-topmost', True)
+                
+                tk.Label(window, text="新名称：").pack(pady=10)
+                name_var = tk.StringVar(value=old_name)
+                entry = ttk.Entry(window, textvariable=name_var)
+                entry.pack(fill=tk.X, padx=20, pady=5)
+                entry.select_range(0, tk.END)
+                entry.focus()
+                
+                button_frame = tk.Frame(window)
+                button_frame.pack(pady=10)
+                ttk.Button(button_frame, text="确定", command=rename_item).pack(side=tk.LEFT, padx=10)
+                ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+            return
+        
+        # 检查是否选中了文件
+        selected_file = self.file_listbox.curselection()
+        if selected_file:
+            index = selected_file[0]
+            # 获取文件路径
+            keyword = self.library_search_var.get().strip()
+            if keyword:
+                results = []
+                if os.path.exists(self.recordings_dir):
+                    for root, dirs, files in os.walk(self.recordings_dir):
+                        for file_name in files:
+                            if keyword in file_name:
+                                results.append(os.path.join(root, file_name))
+                if index < len(results):
+                    old_path = results[index]
+                    old_name = os.path.basename(old_path)
+                    
+                    # 创建重命名窗口
+                    def rename_item():
+                        new_name = name_var.get().strip()
+                        if new_name and new_name != old_name:
+                            if not new_name.endswith('.avi'):
+                                new_name += '.avi'
+                            new_path = os.path.join(os.path.dirname(old_path), new_name)
+                            if not os.path.exists(new_path):
+                                try:
+                                    os.rename(old_path, new_path)
+                                    # 更新文件列表
+                                    self.search_files()
+                                    self.show_notification("重命名成功", is_weak=True)
+                                except Exception as e:
+                                    messagebox.showerror("错误", f"重命名失败: {str(e)}")
+                            else:
+                                messagebox.showerror("错误", "名称已存在")
+                        window.destroy()
+                    
+                    window = tk.Toplevel(self.root)
+                    window.title("重命名")
+                    window.geometry("300x100")
+                    window.resizable(False, False)
+                    window.attributes('-topmost', True)
+                    
+                    tk.Label(window, text="新名称：").pack(pady=10)
+                    name_var = tk.StringVar(value=old_name)
+                    entry = ttk.Entry(window, textvariable=name_var)
+                    entry.pack(fill=tk.X, padx=20, pady=5)
+                    entry.select_range(0, tk.END)
+                    entry.focus()
+                    
+                    button_frame = tk.Frame(window)
+                    button_frame.pack(pady=10)
+                    ttk.Button(button_frame, text="确定", command=rename_item).pack(side=tk.LEFT, padx=10)
+                    ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+    
+    def delete_selected_item(self):
+        """删除选中的项目"""
+        # 检查是否选中了文件夹
+        selected_folder = self.folder_tree.selection()
+        if selected_folder:
+            item = selected_folder[0]
+            values = self.folder_tree.item(item, 'values')
+            if values:
+                path = values[0]
+                confirm = messagebox.askyesno("确认删除", f"确定要删除 '{os.path.basename(path)}' 及其所有内容吗？")
+                if confirm:
+                    try:
+                        import shutil
+                        shutil.rmtree(path)
+                        # 更新文件夹结构
+                        self.init_folder_structure()
+                        self.show_notification("删除成功", is_weak=True)
+                    except Exception as e:
+                        messagebox.showerror("错误", f"删除失败: {str(e)}")
+            return
+        
+        # 检查是否选中了文件
+        selected_file = self.file_listbox.curselection()
+        if selected_file:
+            index = selected_file[0]
+            # 获取文件路径
+            keyword = self.library_search_var.get().strip()
+            if keyword:
+                results = []
+                if os.path.exists(self.recordings_dir):
+                    for root, dirs, files in os.walk(self.recordings_dir):
+                        for file_name in files:
+                            if keyword in file_name:
+                                results.append(os.path.join(root, file_name))
+                if index < len(results):
+                    path = results[index]
+                    confirm = messagebox.askyesno("确认删除", f"确定要删除 '{os.path.basename(path)}' 吗？")
+                    if confirm:
+                        try:
+                            os.remove(path)
+                            # 更新文件列表
+                            self.search_files()
+                            self.show_notification("删除成功", is_weak=True)
+                        except Exception as e:
+                            messagebox.showerror("错误", f"删除失败: {str(e)}")
 
     def create_mini_control(self):
         """创建缩略功能区"""
