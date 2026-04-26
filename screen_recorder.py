@@ -9,6 +9,29 @@ import time
 import os
 import sys
 import json
+import subprocess
+from PIL import Image, ImageTk
+
+# 尝试导入watchdog库用于文件系统监控
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    WATCHDOG_AVAILABLE = True
+except ImportError:
+    WATCHDOG_AVAILABLE = False
+    print("watchdog库未安装，文件系统监控功能将不可用")
+
+class FileSystemMonitor(FileSystemEventHandler):
+    """文件系统监控类"""
+    def __init__(self, screen_recorder):
+        self.screen_recorder = screen_recorder
+    
+    def on_any_event(self, event):
+        """当文件系统发生任何变化时调用"""
+        # 只处理视频资料库目录的变化
+        if os.path.exists(self.screen_recorder.video_library_dir) and self.screen_recorder.video_library_dir in event.src_path:
+            # 延迟更新，避免频繁触发
+            self.screen_recorder.root.after(500, self.screen_recorder.init_folder_structure)
 
 class ScreenRecorder:
     def __init__(self, root):
@@ -79,17 +102,41 @@ class ScreenRecorder:
         self.recordings_dir = "recordings"  # 文件夹X
         self.current_session_dir = None  # 当前录制会话目录
         self.clip_dir = "截取视频"  # 截取视频文件夹
+        self.video_library_dir = "视频资料库"  # 独立的视频资料库目录
         
         # 确保目录存在
         self.ensure_directories()
 
         self.create_ui()
+        
+        # 启动文件系统监控
+        self.start_file_monitor()
     
     def ensure_directories(self):
         """确保必要的目录存在"""
         # 确保recordings目录存在
         if not os.path.exists(self.recordings_dir):
             os.makedirs(self.recordings_dir)
+        # 确保视频资料库目录存在
+        if not os.path.exists(self.video_library_dir):
+            os.makedirs(self.video_library_dir)
+    
+    def start_file_monitor(self):
+        """启动文件系统监控"""
+        if WATCHDOG_AVAILABLE and os.path.exists(self.video_library_dir):
+            self.file_observer = Observer()
+            event_handler = FileSystemMonitor(self)
+            # 监控视频资料库目录的所有子目录
+            self.file_observer.schedule(event_handler, self.video_library_dir, recursive=True)
+            self.file_observer.start()
+            print("文件系统监控已启动")
+    
+    def stop_file_monitor(self):
+        """停止文件系统监控"""
+        if WATCHDOG_AVAILABLE and self.file_observer:
+            self.file_observer.stop()
+            self.file_observer.join()
+            print("文件系统监控已停止")
     
     def create_ui(self):
         # 设置现代主题 - 剪映专业风格
@@ -275,37 +322,56 @@ class ScreenRecorder:
         
         ttk.Button(search_frame, text="搜索", command=self.search_files, style='Custom.TButton').pack(side=tk.RIGHT)
         
+        # 创建文件夹和文件图标
+        # 文件夹图标（黄色文件夹形状）
+        folder_img = Image.new('RGBA', (16, 16), (255, 255, 255, 0))
+        folder_data = folder_img.load()
+        # 绘制文件夹主体
+        for x in range(16):
+            for y in range(16):
+                if y >= 8:
+                    # 文件夹底部
+                    folder_data[x, y] = (255, 168, 32, 255)  # 黄色
+                else:
+                    # 文件夹顶部
+                    if x > y + 4:
+                        folder_data[x, y] = (255, 168, 32, 255)  # 黄色
+        # 绘制文件夹细节
+        for x in range(4, 12):
+            for y in range(10, 14):
+                folder_data[x, y] = (255, 203, 52, 255)  # 浅黄色
+        self.folder_icon = ImageTk.PhotoImage(folder_img)
+        
+        # 文件图标（绿色实心方格）
+        file_img = Image.new('RGB', (16, 16), color='#4CAF50')
+        self.file_icon = ImageTk.PhotoImage(file_img)
+        
         # 文件夹树状结构
         self.folder_tree = ttk.Treeview(self.library_frame, style='Custom.Treeview')
         self.folder_tree.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         self.folder_tree.bind("<Double-1>", self.open_selected_folder)
         
-        # 文件列表
-        self.file_listbox = tk.Listbox(self.library_frame, 
-                                     height=10, 
-                                     bg=self.card_bg, 
-                                     fg=self.text_color, 
-                                     highlightthickness=1, 
-                                     highlightbackground=self.accent_color,
-                                     selectbackground=self.light_bg,
-                                     selectforeground=self.text_color,
-                                     font=('Arial', 9),
-                                     bd=1, 
-                                     relief='solid',
-                                     activestyle='none')
-        self.file_listbox.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        # 添加高亮样式
+        self.folder_tree.tag_configure('highlight', background='#34a853', foreground='#ffffff')
+        
+        # 搜索结果统计标签
+        self.search_stats_label = tk.Label(self.library_frame, text="", 
+                                         bg=self.card_bg, 
+                                         fg=self.secondary_text, 
+                                         font=('Segoe UI', 8))
+        self.search_stats_label.pack(fill=tk.X, pady=(0, 10))
         
         # 资料库控制按钮
         library_buttons = tk.Frame(self.library_frame, bg=self.card_bg)
         library_buttons.pack(fill=tk.X, pady=(0, 10))
         
+        ttk.Button(library_buttons, text="打开", command=self.open_current_folder, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(library_buttons, text="新建文件夹", command=self.create_new_folder, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(library_buttons, text="新建文件", command=self.create_new_file, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(library_buttons, text="导入文件", command=self.import_file, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(library_buttons, text="重命名", command=self.rename_selected_item, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(library_buttons, text="删除", command=self.delete_selected_item, style='Danger.TButton').pack(side=tk.LEFT)
         
-        # 关闭资料库按钮
-        ttk.Button(self.library_frame, text="关闭资料库", command=self.hide_video_library, style='Custom.TButton').pack(fill=tk.X)
+
         
         # 视频预览 - 卡片式设计
         self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=16, style='Custom.TLabelframe')
@@ -420,20 +486,27 @@ class ScreenRecorder:
         self.time_label.pack(side=tk.RIGHT, pady=(12, 0))
         
         # 片段列表
-        self.clip_listbox = tk.Listbox(self.right_frame, 
-                                     height=20, 
-                                     width=35, 
-                                     bg=self.card_bg, 
-                                     fg=self.text_color, 
-                                     highlightthickness=1, 
+        clip_list_frame = tk.Frame(self.right_frame)
+        clip_list_frame.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+        
+        self.clip_listbox = tk.Listbox(clip_list_frame,
+                                     width=35,
+                                     bg=self.card_bg,
+                                     fg=self.text_color,
+                                     highlightthickness=1,
                                      highlightbackground=self.accent_color,
                                      selectbackground=self.light_bg,
                                      selectforeground=self.text_color,
                                      font=('Arial', 9),
-                                     bd=1, 
+                                     bd=1,
                                      relief='solid',
                                      activestyle='none')
-        self.clip_listbox.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+        self.clip_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # 片段列表滚动条
+        clip_scrollbar = ttk.Scrollbar(clip_list_frame, orient=tk.VERTICAL, command=self.clip_listbox.yview)
+        clip_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.clip_listbox.configure(yscrollcommand=clip_scrollbar.set)
         
         # 片段控制按钮
         clip_buttons = tk.Frame(self.right_frame, bg=self.card_bg)
@@ -2546,13 +2619,19 @@ class ScreenRecorder:
         close_btn.pack(side=tk.RIGHT, padx=5)
     
     def show_video_library(self):
-        """显示视频资料库"""
-        # 隐藏视频片段面板
-        self.right_frame.pack_forget()
-        # 显示视频资料库面板
-        self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
-        # 初始化文件夹结构
-        self.init_folder_structure()
+        """显示/隐藏视频资料库"""
+        # 检查视频资料库是否正在显示
+        if self.library_frame.winfo_ismapped():
+            # 如果正在显示，则隐藏
+            self.hide_video_library()
+        else:
+            # 如果没有显示，则显示
+            # 隐藏视频片段面板
+            self.right_frame.pack_forget()
+            # 显示视频资料库面板
+            self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+            # 初始化文件夹结构
+            self.init_folder_structure()
     
     def hide_video_library(self):
         """隐藏视频资料库"""
@@ -2571,14 +2650,30 @@ class ScreenRecorder:
         # 添加根节点
         root_id = self.folder_tree.insert('', tk.END, text="视频资料库", open=True)
         
-        # 添加recordings目录
-        if os.path.exists(self.recordings_dir):
-            recordings_id = self.folder_tree.insert(root_id, tk.END, text=self.recordings_dir, open=True)
-            # 添加recordings下的子目录
-            for item in os.listdir(self.recordings_dir):
-                item_path = os.path.join(self.recordings_dir, item)
+        # 递归添加目录结构
+        if os.path.exists(self.video_library_dir):
+            self._add_folder_children(root_id, self.video_library_dir)
+        
+        # 重置搜索
+        if hasattr(self, 'search_var'):
+            self.search_var.set("")
+            self.search_files()
+    
+    def _add_folder_children(self, parent_id, parent_path):
+        """递归添加文件夹和文件子节点"""
+        try:
+            for item in os.listdir(parent_path):
+                item_path = os.path.join(parent_path, item)
                 if os.path.isdir(item_path):
-                    self.folder_tree.insert(recordings_id, tk.END, text=item, values=[item_path])
+                    # 添加文件夹节点（带emoji图标）
+                    folder_id = self.folder_tree.insert(parent_id, tk.END, text="📂 " + item, values=[item_path], open=False)
+                    # 递归添加子节点
+                    self._add_folder_children(folder_id, item_path)
+                else:
+                    # 添加文件节点（带彩色图标）
+                    self.folder_tree.insert(parent_id, tk.END, text=item, image=self.file_icon, values=[item_path], open=False)
+        except PermissionError:
+            print(f"无法访问: {parent_path}")
     
     def show_folder_structure(self, event=None):
         """显示文件夹层级结构"""
@@ -2587,31 +2682,82 @@ class ScreenRecorder:
     def search_files(self, event=None):
         """搜索文件和文件夹"""
         keyword = self.library_search_var.get().strip()
-        if not keyword:
-            # 清空文件列表
-            self.file_listbox.delete(0, tk.END)
-            return
         
-        # 清空文件列表
-        self.file_listbox.delete(0, tk.END)
+        # 重置目录树样式
+        for item in self.folder_tree.get_children(''):
+            self._reset_tree_item_style(item)
+        
+        if not keyword:
+            # 如果没有关键词，清空统计信息
+            self.search_stats_label.config(text="")
+            return
         
         # 搜索文件和文件夹
         results = []
-        if os.path.exists(self.recordings_dir):
-            for root, dirs, files in os.walk(self.recordings_dir):
+        folder_count = 0
+        file_count = 0
+        
+        if os.path.exists(self.video_library_dir):
+            for root, dirs, files in os.walk(self.video_library_dir):
                 # 搜索文件夹
                 for dir_name in dirs:
                     if keyword in dir_name:
                         results.append((os.path.join(root, dir_name), "文件夹"))
+                        folder_count += 1
                 # 搜索文件
                 for file_name in files:
                     if keyword in file_name:
                         results.append((os.path.join(root, file_name), "文件"))
+                        file_count += 1
         
-        # 添加搜索结果到文件列表
+        # 高亮显示匹配的结果
         for path, type_ in results:
-            display_name = os.path.basename(path)
-            self.file_listbox.insert(tk.END, f"[{type_}] {display_name}")
+            self._highlight_tree_item(path)
+        
+        # 显示搜索统计信息
+        total_count = folder_count + file_count
+        if total_count > 0:
+            self.search_stats_label.config(
+                text=f"找到 {total_count} 个结果：{folder_count} 个文件夹，{file_count} 个文件"
+            )
+        else:
+            self.search_stats_label.config(text="没有找到匹配的结果")
+    
+    def _reset_tree_item_style(self, item):
+        """重置树状结构项的样式"""
+        # 重置当前项
+        self.folder_tree.item(item, tags=())
+        # 递归重置子项
+        for child in self.folder_tree.get_children(item):
+            self._reset_tree_item_style(child)
+    
+    def _highlight_tree_item(self, path):
+        """高亮显示匹配的树状结构项"""
+        # 从根节点开始查找
+        root_item = self.folder_tree.get_children('')[0]
+        self._find_and_highlight_item(root_item, path)    
+    
+    def _find_and_highlight_item(self, item, target_path):
+        """递归查找并高亮匹配的树状结构项"""
+        values = self.folder_tree.item(item, 'values')
+        if values:
+            item_path = values[0]
+            if item_path == target_path:
+                # 高亮显示匹配项
+                self.folder_tree.item(item, tags=('highlight',))
+                # 展开父节点
+                parent = self.folder_tree.parent(item)
+                while parent:
+                    self.folder_tree.item(parent, open=True)
+                    parent = self.folder_tree.parent(parent)
+                return True
+        
+        # 递归搜索子项
+        for child in self.folder_tree.get_children(item):
+            if self._find_and_highlight_item(child, target_path):
+                return True
+        
+        return False
     
     def open_selected_folder(self, event=None):
         """打开选中的文件夹"""
@@ -2628,20 +2774,50 @@ class ScreenRecorder:
                     else:
                         subprocess.call(['open', folder_path])
     
+    def open_current_folder(self):
+        """打开当前选中的文件夹"""
+        selected_item = self.folder_tree.selection()
+        if selected_item:
+            item = selected_item[0]
+            values = self.folder_tree.item(item, 'values')
+            if values:
+                folder_path = values[0]
+                if os.path.exists(folder_path):
+                    if os.path.isdir(folder_path):
+                        # 打开文件夹
+                        if os.name == 'nt':
+                            os.startfile(folder_path)
+                        else:
+                            subprocess.call(['open', folder_path])
+                    else:
+                        # 打开文件所在的文件夹
+                        folder_path = os.path.dirname(folder_path)
+                        if os.name == 'nt':
+                            os.startfile(folder_path)
+                        else:
+                            subprocess.call(['open', folder_path])
+        else:
+            # 没有选中时打开视频资料库根目录
+            if os.path.exists(self.video_library_dir):
+                if os.name == 'nt':
+                    os.startfile(self.video_library_dir)
+                else:
+                    subprocess.call(['open', self.video_library_dir])
+    
     def create_new_folder(self):
         """新建文件夹"""
         # 获取当前选中的文件夹
         selected_item = self.folder_tree.selection()
         if not selected_item:
-            # 默认在recordings目录下创建
-            parent_path = self.recordings_dir
+            # 默认在视频资料库目录下创建
+            parent_path = self.video_library_dir
         else:
             item = selected_item[0]
             values = self.folder_tree.item(item, 'values')
             if values:
                 parent_path = values[0]
             else:
-                parent_path = self.recordings_dir
+                parent_path = self.video_library_dir
         
         # 创建文件夹名称输入窗口
         def create_folder():
@@ -2662,7 +2838,7 @@ class ScreenRecorder:
         
         window = tk.Toplevel(self.root)
         window.title("新建文件夹")
-        window.geometry("300x100")
+        window.geometry("300x150")
         window.resizable(False, False)
         window.attributes('-topmost', True)
         
@@ -2674,60 +2850,62 @@ class ScreenRecorder:
         
         button_frame = tk.Frame(window)
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="确定", command=create_folder).pack(side=tk.LEFT, padx=10)
-        ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="确定", command=create_folder, style='Accent.TButton').pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=10)
     
-    def create_new_file(self):
-        """新建文件"""
+    def import_file(self):
+        """导入文件"""
         # 获取当前选中的文件夹
         selected_item = self.folder_tree.selection()
         if not selected_item:
-            # 默认在recordings目录下创建
-            parent_path = self.recordings_dir
+            # 默认在视频资料库目录下创建
+            parent_path = self.video_library_dir
         else:
             item = selected_item[0]
             values = self.folder_tree.item(item, 'values')
             if values:
                 parent_path = values[0]
             else:
-                parent_path = self.recordings_dir
+                parent_path = self.video_library_dir
         
-        # 创建文件名称输入窗口
-        def create_file():
-            file_name = file_var.get().strip()
-            if file_name:
-                if not file_name.endswith('.avi'):
-                    file_name += '.avi'
-                file_path = os.path.join(parent_path, file_name)
-                if not os.path.exists(file_path):
-                    try:
-                        # 创建空文件
-                        open(file_path, 'w').close()
-                        # 更新文件列表
-                        self.search_files()
-                        self.show_notification("文件创建成功", is_weak=True)
-                    except Exception as e:
-                        messagebox.showerror("错误", f"创建文件失败: {str(e)}")
-                else:
-                    messagebox.showerror("错误", "文件已存在")
-            window.destroy()
+        # 打开系统文件选择器
+        file_paths = filedialog.askopenfilenames(
+            title="选择要导入的文件",
+            filetypes=[("视频文件", "*.avi *.mp4 *.mkv *.mov *.wmv"), ("所有文件", "*.*")]
+        )
         
-        window = tk.Toplevel(self.root)
-        window.title("新建文件")
-        window.geometry("300x100")
-        window.resizable(False, False)
-        window.attributes('-topmost', True)
-        
-        tk.Label(window, text="文件名称：").pack(pady=10)
-        file_var = tk.StringVar()
-        entry = ttk.Entry(window, textvariable=file_var)
-        entry.pack(fill=tk.X, padx=20, pady=5)
-        entry.focus()
-        
-        button_frame = tk.Frame(window)
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="确定", command=create_file).pack(side=tk.LEFT, padx=10)
-        ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+        if file_paths:
+            success_count = 0
+            fail_count = 0
+            for src_path in file_paths:
+                try:
+                    file_name = os.path.basename(src_path)
+                    dst_path = os.path.join(parent_path, file_name)
+                    
+                    # 如果目标文件已存在，生成新文件名
+                    if os.path.exists(dst_path):
+                        name, ext = os.path.splitext(file_name)
+                        counter = 1
+                        while os.path.exists(dst_path):
+                            file_name = f"{name}_{counter}{ext}"
+                            dst_path = os.path.join(parent_path, file_name)
+                            counter += 1
+                    
+                    # 复制文件
+                    import shutil
+                    shutil.copy2(src_path, dst_path)
+                    success_count += 1
+                except Exception as e:
+                    fail_count += 1
+                    print(f"导入文件失败: {str(e)}")
+            
+            # 更新文件夹结构
+            self.init_folder_structure()
+            
+            if success_count > 0:
+                self.show_notification(f"成功导入 {success_count} 个文件", is_weak=True)
+            if fail_count > 0:
+                messagebox.showerror("错误", f"有 {fail_count} 个文件导入失败")
     
     def rename_selected_item(self):
         """重命名选中的项目"""
@@ -2759,7 +2937,7 @@ class ScreenRecorder:
                 
                 window = tk.Toplevel(self.root)
                 window.title("重命名")
-                window.geometry("300x100")
+                window.geometry("300x150")
                 window.resizable(False, False)
                 window.attributes('-topmost', True)
                 
@@ -2772,8 +2950,8 @@ class ScreenRecorder:
                 
                 button_frame = tk.Frame(window)
                 button_frame.pack(pady=10)
-                ttk.Button(button_frame, text="确定", command=rename_item).pack(side=tk.LEFT, padx=10)
-                ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+                ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=10)
+                ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=10)
             return
         
         # 检查是否选中了文件
@@ -2784,8 +2962,8 @@ class ScreenRecorder:
             keyword = self.library_search_var.get().strip()
             if keyword:
                 results = []
-                if os.path.exists(self.recordings_dir):
-                    for root, dirs, files in os.walk(self.recordings_dir):
+                if os.path.exists(self.video_library_dir):
+                    for root, dirs, files in os.walk(self.video_library_dir):
                         for file_name in files:
                             if keyword in file_name:
                                 results.append(os.path.join(root, file_name))
@@ -2814,7 +2992,7 @@ class ScreenRecorder:
                     
                     window = tk.Toplevel(self.root)
                     window.title("重命名")
-                    window.geometry("300x100")
+                    window.geometry("300x150")
                     window.resizable(False, False)
                     window.attributes('-topmost', True)
                     
@@ -2827,8 +3005,8 @@ class ScreenRecorder:
                     
                     button_frame = tk.Frame(window)
                     button_frame.pack(pady=10)
-                    ttk.Button(button_frame, text="确定", command=rename_item).pack(side=tk.LEFT, padx=10)
-                    ttk.Button(button_frame, text="取消", command=window.destroy).pack(side=tk.LEFT, padx=10)
+                    ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=10)
+                    ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=10)
     
     def delete_selected_item(self):
         """删除选中的项目"""
@@ -2859,8 +3037,8 @@ class ScreenRecorder:
             keyword = self.library_search_var.get().strip()
             if keyword:
                 results = []
-                if os.path.exists(self.recordings_dir):
-                    for root, dirs, files in os.walk(self.recordings_dir):
+                if os.path.exists(self.video_library_dir):
+                    for root, dirs, files in os.walk(self.video_library_dir):
                         for file_name in files:
                             if keyword in file_name:
                                 results.append(os.path.join(root, file_name))
