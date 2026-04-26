@@ -270,6 +270,15 @@ class ScreenRecorder:
         self.rename_btn.pack(side=tk.LEFT, padx=(10, 0))
         self.rename_btn.pack_forget()  # 初始隐藏
         
+        # 文件位置按钮
+        self.location_btn = tk.Button(filename_frame, text="📁", command=self.open_video_location,
+                                   font=('Segoe UI Emoji', 11), bg=self.light_bg, fg="#ffffff",
+                                   relief=tk.FLAT, cursor='hand2', bd=0,
+                                   highlightthickness=0,
+                                   padx=6, pady=2)
+        self.location_btn.pack(side=tk.LEFT, padx=(10, 0))
+        self.location_btn.pack_forget()  # 初始隐藏
+        
         # 添加按钮悬停效果
         def on_rename_enter(e):
             # 平滑过渡到悬停颜色
@@ -289,6 +298,26 @@ class ScreenRecorder:
                 self.root.after(10)
         self.rename_btn.bind("<Enter>", on_rename_enter)
         self.rename_btn.bind("<Leave>", on_rename_leave)
+        
+        # 文件位置按钮悬停效果
+        def on_location_enter(e):
+            # 平滑过渡到悬停颜色
+            for i in range(10):
+                alpha = i / 10
+                bg_color = f"#{int((1-alpha)*int(self.light_bg[1:3], 16) + alpha*int(self.accent_color[1:3], 16)):02x}{int((1-alpha)*int(self.light_bg[3:5], 16) + alpha*int(self.accent_color[3:5], 16)):02x}{int((1-alpha)*int(self.light_bg[5:7], 16) + alpha*int(self.accent_color[5:7], 16)):02x}"
+                self.location_btn.config(bg=bg_color)
+                self.root.update()
+                self.root.after(10)
+        def on_location_leave(e):
+            # 平滑过渡到原始颜色
+            for i in range(10):
+                alpha = i / 10
+                bg_color = f"#{int(alpha*int(self.light_bg[1:3], 16) + (1-alpha)*int(self.accent_color[1:3], 16)):02x}{int(alpha*int(self.light_bg[3:5], 16) + (1-alpha)*int(self.accent_color[3:5], 16)):02x}{int(alpha*int(self.light_bg[5:7], 16) + (1-alpha)*int(self.accent_color[5:7], 16)):02x}"
+                self.location_btn.config(bg=bg_color)
+                self.root.update()
+                self.root.after(10)
+        self.location_btn.bind("<Enter>", on_location_enter)
+        self.location_btn.bind("<Leave>", on_location_leave)
         
         # 视频画布 - 圆角边框效果
         self.canvas = tk.Canvas(self.video_frame, bg="#151515", 
@@ -351,6 +380,10 @@ class ScreenRecorder:
         clip_buttons.pack(fill=tk.X, pady=(16, 0))
         
         ttk.Button(clip_buttons, text="播放选中", command=self.play_selected_clip, 
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(clip_buttons, text="重命名", command=self.rename_selected_clip, 
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(clip_buttons, text="文件位置", command=self.open_clip_location, 
                   style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(clip_buttons, text="删除片段", command=self.delete_selected_clip, 
                   style='Danger.TButton').pack(side=tk.LEFT)
@@ -557,6 +590,239 @@ class ScreenRecorder:
             # 显示视频第一帧
             self.show_first_frame()
     
+    def open_video_location(self):
+        """打开视频文件所在的目录并选中该文件"""
+        if not self.video_file or not os.path.exists(self.video_file):
+            return
+        
+        try:
+            # 打开目录并选中文件
+            if os.name == 'nt':  # Windows
+                # 使用 explorer.exe /select 命令选中文件
+                import subprocess
+                subprocess.run(['explorer.exe', '/select,', self.video_file])
+            elif os.name == 'posix':  # macOS/Linux
+                if 'darwin' in sys.platform:  # macOS
+                    import subprocess
+                    subprocess.run(['open', '-R', self.video_file])
+                else:  # Linux
+                    # 尝试使用常见的文件管理器
+                    import subprocess
+                    try:
+                        # 尝试 Nautilus (GNOME)
+                        subprocess.run(['nautilus', '--select', self.video_file])
+                    except FileNotFoundError:
+                        try:
+                            # 尝试 Dolphin (KDE)
+                            subprocess.run(['dolphin', '--select', self.video_file])
+                        except FileNotFoundError:
+                            # 尝试 Thunar (Xfce)
+                            subprocess.run(['thunar', '--select', self.video_file])
+        except Exception as e:
+            print(f"打开文件位置失败: {e}")
+            self.show_notification("打开文件位置失败", is_weak=True)
+    
+    def open_clip_location(self):
+        """打开选中片段所在的目录并选中该文件"""
+        if not self.current_session_dir:
+            return
+        
+        try:
+            # 获取截取视频文件夹
+            clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
+            # 确保目录存在
+            if not os.path.exists(clip_dir):
+                os.makedirs(clip_dir)
+            
+            # 获取选中的片段
+            selected_index = self.clip_listbox.curselection()
+            if selected_index:
+                # 构建选中片段的文件路径
+                clip_index = selected_index[0]
+                if clip_index < len(self.clips):
+                    clip = self.clips[clip_index]
+                    clip_id = clip.get('id', clip_index + 1)
+                    # 检查片段是否有自定义名称
+                    if 'name' in clip and clip['name']:
+                        clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+                    else:
+                        # 获取当前视频的文件名（不含路径和后缀）
+                        video_filename = ""
+                        if self.video_file:
+                            basename = os.path.basename(self.video_file)
+                            video_filename = os.path.splitext(basename)[0] + "_"
+                        # 使用与显示名称一致的格式
+                        clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
+                    
+                    # 打开目录并选中文件
+                    if os.path.exists(clip_file):
+                        if os.name == 'nt':  # Windows
+                            import subprocess
+                            subprocess.run(['explorer.exe', '/select,', clip_file])
+                        elif os.name == 'posix':  # macOS/Linux
+                            if 'darwin' in sys.platform:  # macOS
+                                import subprocess
+                                subprocess.run(['open', '-R', clip_file])
+                            else:  # Linux
+                                # 尝试使用常见的文件管理器
+                                import subprocess
+                                try:
+                                    # 尝试 Nautilus (GNOME)
+                                    subprocess.run(['nautilus', '--select', clip_file])
+                                except FileNotFoundError:
+                                    try:
+                                        # 尝试 Dolphin (KDE)
+                                        subprocess.run(['dolphin', '--select', clip_file])
+                                    except FileNotFoundError:
+                                        # 尝试 Thunar (Xfce)
+                                        subprocess.run(['thunar', '--select', clip_file])
+                        return
+            
+            # 如果没有选中片段或片段文件不存在，只打开目录
+            if os.name == 'nt':  # Windows
+                os.startfile(clip_dir)
+            else:  # macOS/Linux
+                import subprocess
+                subprocess.call(['open', clip_dir])
+        except Exception as e:
+            print(f"打开文件位置失败: {e}")
+            self.show_notification("打开文件位置失败", is_weak=True)
+    
+    def rename_selected_clip(self):
+        """重命名选中的片段"""
+        selected_index = self.clip_listbox.curselection()
+        if not selected_index:
+            self.show_notification("请先选择要重命名的片段", is_weak=True)
+            return
+        
+        clip_index = selected_index[0]
+        if clip_index >= len(self.clips):
+            return
+        
+        clip = self.clips[clip_index]
+        clip_id = clip.get('id', clip_index + 1)
+        
+        # 创建重命名窗口
+        rename_window = tk.Toplevel(self.root)
+        rename_window.title("重命名片段")
+        rename_window.geometry("400x150")
+        rename_window.configure(bg=self.card_bg)
+        rename_window.resizable(False, False)
+        rename_window.attributes('-topmost', True)
+        
+        # 居中显示
+        rename_window.update_idletasks()
+        screen_width = rename_window.winfo_screenwidth()
+        screen_height = rename_window.winfo_screenheight()
+        x = (screen_width - 400) // 2
+        y = (screen_height - 150) // 2
+        rename_window.geometry(f"400x150+{x}+{y}")
+        
+        # 当前名称
+        if 'name' in clip and clip['name']:
+            current_name = clip['name']
+        else:
+            # 获取当前视频的文件名（不含路径和后缀）
+            video_filename = ""
+            if self.video_file:
+                basename = os.path.basename(self.video_file)
+                video_filename = os.path.splitext(basename)[0] + "_"
+            # 使用与系统文件名一致的格式
+            current_name = f"{video_filename}片段 {clip_id}"
+        
+        # 标签
+        tk.Label(rename_window, text="输入新的片段名称：", 
+                font=('Arial', 10), bg=self.card_bg, fg=self.text_color).pack(pady=(15, 5))
+        
+        # 输入框框架
+        input_frame = tk.Frame(rename_window, bg=self.card_bg)
+        input_frame.pack(pady=5)
+        
+        # 名称输入框
+        name_var = tk.StringVar(value=current_name)
+        name_entry = tk.Entry(input_frame, textvariable=name_var, 
+                             font=('Arial', 10), width=30)
+        name_entry.pack(side=tk.LEFT, padx=(0, 5))
+        name_entry.select_range(0, tk.END)
+        name_entry.focus()
+        
+        # 后缀标签
+        tk.Label(input_frame, text=".avi", 
+                font=('Arial', 10), bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        # 按钮框架
+        button_frame = tk.Frame(rename_window, bg=self.card_bg)
+        button_frame.pack(pady=15)
+        
+        # 确定按钮
+        def confirm_rename():
+            new_name = name_var.get().strip()
+            if not new_name:
+                messagebox.showerror("错误", "名称不能为空")
+                return
+            
+            # 检查新名称是否已存在
+            clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
+            new_file = os.path.join(clip_dir, f"{new_name}.avi")
+            
+            # 检查是否与其他文件重名
+            duplicate_found = False
+            if os.path.exists(clip_dir):
+                for file in os.listdir(clip_dir):
+                    if file.endswith('.avi') and file == f"{new_name}.avi":
+                        duplicate_found = True
+                        break
+            
+            if duplicate_found:
+                self.show_notification("已存在重名文件", is_weak=True, parent=rename_window)
+                return
+            
+            # 获取原文件路径
+            if 'name' in clip and clip['name']:
+                old_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+            else:
+                # 获取当前视频的文件名（不含路径和后缀）
+                video_filename = ""
+                if self.video_file:
+                    basename = os.path.basename(self.video_file)
+                    video_filename = os.path.splitext(basename)[0] + "_"
+                # 使用与显示名称一致的格式
+                old_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
+            
+            try:
+                # 重命名文件
+                if os.path.exists(old_file):
+                    os.rename(old_file, new_file)
+                    print(f"片段文件已重命名: {old_file} -> {new_file}")
+                
+                # 更新片段信息
+                clip['name'] = new_name
+                
+                # 更新视频片段字典
+                if self.video_file in self.video_clips:
+                    for c in self.video_clips[self.video_file]:
+                        if c['id'] == clip_id:
+                            c['name'] = new_name
+                            break
+                
+                # 更新片段列表
+                self.update_clips()
+                
+                # 关闭窗口
+                rename_window.destroy()
+                
+                self.show_notification("片段重命名成功", is_weak=True)
+            except Exception as e:
+                print(f"重命名失败: {e}")
+                messagebox.showerror("错误", f"重命名失败：{str(e)}")
+        
+        # 取消按钮
+        def cancel_rename():
+            rename_window.destroy()
+        
+        ttk.Button(button_frame, text="确定", command=confirm_rename, style='Accent.TButton').pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="取消", command=cancel_rename, style='Custom.TButton').pack(side=tk.LEFT, padx=5)
+    
     def rename_video_file(self):
         """修改视频文件名"""
         if not self.video_file or not os.path.exists(self.video_file):
@@ -707,12 +973,19 @@ class ScreenRecorder:
                         # 尝试从文件名提取片段ID
                         clip_id = i
                         # 尝试从文件名中提取ID
-                        if clip_file.startswith('clip_') and clip_file.endswith('.avi'):
+                        if clip_file.endswith('.avi'):
                             try:
-                                # 提取数字部分
-                                id_part = clip_file.split('_')[1].split('.')[0]
-                                clip_id = int(id_part)
-                                print(f"从文件名提取的ID: {clip_id}")
+                                # 检查是否是新格式：{video_filename}_片段 {id}.avi
+                                if '片段' in clip_file:
+                                    # 提取数字部分
+                                    id_part = clip_file.split('片段 ')[1].split('.')[0]
+                                    clip_id = int(id_part)
+                                    print(f"从新格式文件名提取的ID: {clip_id}")
+                                elif clip_file.startswith('clip_'):
+                                    # 兼容旧格式
+                                    id_part = clip_file.split('_')[1].split('.')[0]
+                                    clip_id = int(id_part)
+                                    print(f"从旧格式文件名提取的ID: {clip_id}")
                             except:
                                 pass
                         # 由于我们没有存储片段的时间信息，暂时使用默认值
@@ -738,9 +1011,11 @@ class ScreenRecorder:
             filename = os.path.basename(self.video_file)
             self.video_filename_label.config(text=filename)
             self.rename_btn.pack(side=tk.LEFT, padx=(10, 0))  # 显示修改按钮
+            self.location_btn.pack(side=tk.LEFT, padx=(10, 0))  # 显示文件位置按钮
         else:
             self.video_filename_label.config(text="")
             self.rename_btn.pack_forget()  # 隐藏修改按钮
+            self.location_btn.pack_forget()  # 隐藏文件位置按钮
         
         cap = cv2.VideoCapture(self.video_file)
         if not cap.isOpened():
@@ -1138,7 +1413,17 @@ class ScreenRecorder:
                 if self.video_file:
                     try:
                         # 构建剪辑保存路径
-                        clip_filename = f"clip_{clip['id']:02d}.avi"
+                        # 检查片段是否有自定义名称
+                        if 'name' in clip and clip['name']:
+                            clip_filename = f"{clip['name']}.avi"
+                        else:
+                            # 获取当前视频的文件名（不含路径和后缀）
+                            video_filename = ""
+                            if self.video_file:
+                                basename = os.path.basename(self.video_file)
+                                video_filename = os.path.splitext(basename)[0] + "_"
+                            # 使用与显示名称一致的格式
+                            clip_filename = f"{video_filename}片段 {clip['id']}.avi"
                         clip_path = os.path.join(os.path.dirname(self.video_file), self.clip_dir, clip_filename)
                         
                         # 打开原始视频
@@ -1344,8 +1629,13 @@ class ScreenRecorder:
                 # 如果有<1个标记（即0个），填充为空
                 marker_name = ""
             
-            # 格式：{视频文件名}_{片段 id}: {开始时间} - {结束时间} ({标记名称})
-            item = f"{video_filename}片段 {clip['id']}: {start} - {end} ({marker_name})"
+            # 使用自定义名称（如果存在），否则使用默认格式
+            if 'name' in clip and clip['name']:
+                # 格式：{自定义名称}: {开始时间} - {结束时间} ({标记名称})
+                item = f"{clip['name']}: {start} - {end} ({marker_name})"
+            else:
+                # 格式：{视频文件名}_{片段 id}: {开始时间} - {结束时间} ({标记名称})
+                item = f"{video_filename}片段 {clip['id']}: {start} - {end} ({marker_name})"
             clip_items.append(item)
             self.clip_listbox.insert(tk.END, item)
         
