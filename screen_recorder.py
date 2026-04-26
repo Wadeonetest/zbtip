@@ -2052,8 +2052,42 @@ class ScreenRecorder:
     def delete_selected_clip(self):
         selected = self.clip_listbox.curselection()
         if selected:
-            self.clips.pop(selected[0])
-            self.update_clips()
+            # 显示二次确认弹窗
+            confirm = messagebox.askyesno("确认删除", "确定要删除选中的片段吗？")
+            if confirm:
+                # 从列表中删除片段
+                clip_index = selected[0]
+                clip = self.clips[clip_index]
+                clip_id = clip.get('id', clip_index + 1)
+                
+                # 删除对应的文件
+                if self.current_session_dir:
+                    clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
+                    # 构建文件路径
+                    if 'name' in clip and clip['name']:
+                        clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+                    else:
+                        # 获取当前视频的文件名（不含路径和后缀）
+                        video_filename = ""
+                        if self.video_file:
+                            basename = os.path.basename(self.video_file)
+                            video_filename = os.path.splitext(basename)[0] + "_"
+                        clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
+                    
+                    # 删除文件
+                    if os.path.exists(clip_file):
+                        try:
+                            os.remove(clip_file)
+                            print(f"删除片段文件: {clip_file}")
+                        except Exception as e:
+                            print(f"删除文件失败: {e}")
+                
+                # 从内存中删除片段
+                self.clips.pop(clip_index)
+                # 更新片段列表
+                self.update_clips()
+                # 显示删除成功通知
+                self.show_notification("片段删除成功", is_weak=True)
     
     def play_video(self):
         if self.video_file:
