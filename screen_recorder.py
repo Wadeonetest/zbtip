@@ -8,6 +8,7 @@ import threading
 import time
 import os
 import sys
+import sys
 
 class ScreenRecorder:
     def __init__(self, root):
@@ -424,7 +425,13 @@ class ScreenRecorder:
         
         # 设置视频文件路径
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 获取应用程序所在目录
+        if getattr(sys, 'frozen', False):
+            # 打包后
+            current_dir = os.path.dirname(sys.executable)
+        else:
+            # 未打包
+            current_dir = os.path.dirname(os.path.abspath(__file__))
         
         # 创建会话目录
         self.current_session_dir = os.path.join(current_dir, self.recordings_dir, timestamp)
