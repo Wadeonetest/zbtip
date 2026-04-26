@@ -8,7 +8,7 @@ import threading
 import time
 import os
 import sys
-import sys
+import json
 
 class ScreenRecorder:
     def __init__(self, root):
@@ -423,12 +423,22 @@ class ScreenRecorder:
         self.mark_btn.grid(row=0, column=2, padx=6, pady=2)
         self.clip_btn.config(state=tk.DISABLED)
         
+        # 取消截取视频状态
+        self.clip_mode = False
+        self.clip_btn.config(text="截取视频", state=tk.NORMAL)
+        self.finish_clip_btn.config(state=tk.DISABLED)
+        
         # 设置视频文件路径
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         # 获取应用程序所在目录
         if getattr(sys, 'frozen', False):
             # 打包后
-            current_dir = os.path.dirname(sys.executable)
+            if hasattr(sys, '_MEIPASS'):
+                # PyInstaller单文件模式
+                current_dir = os.path.dirname(sys.executable)
+            else:
+                # 其他打包模式（如MSIX）
+                current_dir = os.path.dirname(sys.executable)
         else:
             # 未打包
             current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -658,9 +668,17 @@ class ScreenRecorder:
         """显示视频的第一帧画面"""
         if not self.video_file or not os.path.exists(self.video_file):
             return
+
+        # 计算视频时长
+        self.calculate_video_duration()
         
-        # 加载当前视频的标记和片段
-        if self.video_file in self.video_markers:
+        # 加载当前视频的标记 - 优先从文件加载
+        saved_markers = self.load_markers_from_file()
+        if saved_markers:
+            self.markers = saved_markers
+            self.video_markers[self.video_file] = saved_markers.copy()
+            self.marker_count = len(self.markers)
+        elif self.video_file in self.video_markers:
             self.markers = self.video_markers[self.video_file].copy()
             self.marker_count = len(self.markers)
         else:
@@ -767,6 +785,10 @@ class ScreenRecorder:
         
         # 更新进度条，显示当前视频的标记
         self.update_progress_bar()
+
+        # 启用播放按钮和截取视频按钮
+        self.play_btn.config(state=tk.NORMAL)
+        self.clip_btn.config(state=tk.NORMAL)
     
     def record_screen(self):
         while self.recording:
@@ -781,6 +803,35 @@ class ScreenRecorder:
                 if not hasattr(self, 'pause_time'):
                     self.pause_time = time.time()
                 time.sleep(0.1)
+    
+    def save_markers_to_file(self):
+        """保存标记信息到会话目录的JSON文件"""
+        if not self.current_session_dir or not self.markers:
+            return
+        
+        markers_file = os.path.join(self.current_session_dir, "markers.json")
+        try:
+            with open(markers_file, 'w', encoding='utf-8') as f:
+                json.dump(self.markers, f, ensure_ascii=False, indent=2)
+            print(f"标记已保存到: {markers_file}")
+        except Exception as e:
+            print(f"保存标记失败: {e}")
+    
+    def load_markers_from_file(self):
+        """从会话目录的JSON文件加载标记信息"""
+        if not self.current_session_dir:
+            return []
+        
+        markers_file = os.path.join(self.current_session_dir, "markers.json")
+        if os.path.exists(markers_file):
+            try:
+                with open(markers_file, 'r', encoding='utf-8') as f:
+                    markers = json.load(f)
+                print(f"从 {markers_file} 加载了 {len(markers)} 个标记")
+                return markers
+            except Exception as e:
+                print(f"加载标记失败: {e}")
+        return []
     
     def calculate_video_duration(self):
         if self.video_file:
@@ -1051,6 +1102,8 @@ class ScreenRecorder:
                 print(f"[调试] 标记{i}: 时间={m['time']:.2f}")
             self.update_progress_bar()
             self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True)
+            # 保存标记到文件
+            self.save_markers_to_file()
     
     def start_clip(self):
         if self.video_file and self.video_duration > 0:
@@ -1708,16 +1761,23 @@ class ScreenRecorder:
     
     def play_video(self):
         if self.video_file:
-            self.stop_video = True
-            if self.video_thread:
-                self.video_thread.join(timeout=1)
-            self.video_playing = True
-            self.video_paused = False
-            self.play_btn.config(state=tk.DISABLED)
-            self.pause_video_btn.config(state=tk.NORMAL)
-            self.video_thread = threading.Thread(target=self.play_video_thread)
-            self.video_thread.daemon = True
-            self.video_thread.start()
+            # 如果处于暂停状态，只取消暂停，继续播放（不从头开始）
+            if self.video_playing and self.video_paused:
+                self.video_paused = False
+                self.play_btn.config(state=tk.DISABLED)
+                self.pause_video_btn.config(state=tk.NORMAL)
+            else:
+                # 停止状态或正在播放：从头开始播放
+                self.stop_video = True
+                if self.video_thread:
+                    self.video_thread.join(timeout=1)
+                self.video_playing = True
+                self.video_paused = False
+                self.play_btn.config(state=tk.DISABLED)
+                self.pause_video_btn.config(state=tk.NORMAL)
+                self.video_thread = threading.Thread(target=self.play_video_thread)
+                self.video_thread.daemon = True
+                self.video_thread.start()
     
     def play_video_thread(self):
         print("\n=== 主页面视频播放线程开始 ===")
@@ -1806,6 +1866,14 @@ class ScreenRecorder:
     
     def pause_video(self):
         self.video_paused = not self.video_paused
+        if self.video_paused:
+            # 暂停状态：启用播放按钮，禁用暂停按钮
+            self.play_btn.config(state=tk.NORMAL)
+            self.pause_video_btn.config(state=tk.DISABLED)
+        else:
+            # 取消暂停：禁用播放按钮，启用暂停按钮
+            self.play_btn.config(state=tk.DISABLED)
+            self.pause_video_btn.config(state=tk.NORMAL)
     
     def on_progress_click(self, event):
         if self.video_duration > 0:
@@ -1941,6 +2009,8 @@ class ScreenRecorder:
             marker["note"] = self.marker_note_var.get()
             self.marker_edit_window.withdraw()
             self.notification.withdraw()
+            # 保存标记到文件
+            self.save_markers_to_file()
 
     def show_record_history(self):
         """显示录制记录"""
@@ -1949,8 +2019,8 @@ class ScreenRecorder:
         history_window.title("录制记录")
         history_window.geometry("800x450")  # 增大高度，确保能显示按钮
         history_window.configure(bg="#1a1a1a")
-        history_window.attributes('-topmost', True)
         history_window.resizable(True, True)
+        
         
         # 标题
         title_label = tk.Label(history_window, text="录制记录", 
