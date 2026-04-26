@@ -14,7 +14,13 @@ class ScreenRecorder:
     def __init__(self, root):
         self.root = root
         self.root.title("屏幕录制工具")
-        self.root.geometry("1200x800")
+        # 获取屏幕大小的80%
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = int(screen_width * 0.8)
+        window_height = int(screen_height * 0.8)
+        # 设置窗口大小
+        self.root.geometry(f"{window_width}x{window_height}")
         self.root.resizable(True, True)
         self.recording = False
         self.paused = False
