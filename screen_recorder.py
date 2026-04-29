@@ -17,26 +17,34 @@ try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
     WATCHDOG_AVAILABLE = True
+    
+    class FileSystemMonitor(FileSystemEventHandler):
+        """文件系统监控类"""
+        def __init__(self, screen_recorder):
+            self.screen_recorder = screen_recorder
+        
+        def on_any_event(self, event):
+            """当文件系统发生任何变化时调用"""
+            # 只处理视频资料库目录的变化
+            if os.path.exists(self.screen_recorder.video_library_dir) and self.screen_recorder.video_library_dir in event.src_path:
+                # 延迟更新，避免频繁触发
+                self.screen_recorder.root.after(500, self.screen_recorder.init_folder_structure)
 except ImportError:
     WATCHDOG_AVAILABLE = False
     print("watchdog库未安装，文件系统监控功能将不可用")
-
-class FileSystemMonitor(FileSystemEventHandler):
-    """文件系统监控类"""
-    def __init__(self, screen_recorder):
-        self.screen_recorder = screen_recorder
     
-    def on_any_event(self, event):
-        """当文件系统发生任何变化时调用"""
-        # 只处理视频资料库目录的变化
-        if os.path.exists(self.screen_recorder.video_library_dir) and self.screen_recorder.video_library_dir in event.src_path:
-            # 延迟更新，避免频繁触发
-            self.screen_recorder.root.after(500, self.screen_recorder.init_folder_structure)
+    class FileSystemMonitor:
+        """文件系统监控类（空实现）"""
+        def __init__(self, screen_recorder):
+            self.screen_recorder = screen_recorder
+        
+        def on_any_event(self, event):
+            pass
 
 class ScreenRecorder:
     def __init__(self, root):
         self.root = root
-        self.root.title("屏幕录制工具")
+        self.root.title("直播录制标记助手")
         # 获取屏幕大小的80%
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
@@ -182,47 +190,49 @@ class ScreenRecorder:
         self.style.configure('Small.TLabel', background=self.card_bg,
                           foreground=self.secondary_text, font=('Segoe UI', 9))
         
-        # 按钮基础样式
+        # 按钮基础样式 - 现代圆角设计
         self.style.configure('Custom.TButton',
                           background=self.light_bg,
                           foreground=self.text_color,
                           font=('Segoe UI', 9, 'bold'),
-                          padding=(14, 8),
-                          borderwidth=1,
-                          relief='solid',
-                          bordercolor=self.border_color,
-                          focuscolor='none')
+                          padding=(16, 10),
+                          borderwidth=0,
+                          relief='flat',
+                          focuscolor='none',
+                          borderradius=6)  # 圆角
         self.style.map('Custom.TButton',
-                    background=[('active', '#4a4a4a'), ('pressed', '#3a3a3a')],
-                    foreground=[('active', self.text_color)])
+                    background=[('active', '#4a4a4a'), ('pressed', '#3a3a3a'), ('disabled', '#3a3a3a')],
+                    foreground=[('active', self.text_color), ('disabled', '#666666')])
         
-        # 强调按钮样式
+        # 强调按钮样式 - 绿色圆角
         self.style.configure('Accent.TButton',
                           background=self.accent_color,
                           foreground='#ffffff',
                           font=('Segoe UI', 9, 'bold'),
-                          padding=(14, 8),
+                          padding=(16, 10),
                           borderwidth=0,
-                          relief='solid',
-                          focuscolor='none')
+                          relief='flat',
+                          focuscolor='none',
+                          borderradius=6)  # 圆角
         self.style.map('Accent.TButton',
-                    background=[('active', self.accent_hover), ('pressed', '#267340')],
-                    foreground=[('active', '#ffffff')])
+                    background=[('active', self.accent_hover), ('pressed', '#267340'), ('disabled', '#3a3a3a')],
+                    foreground=[('active', '#ffffff'), ('disabled', '#666666')])
         
-        # 危险按钮样式
+        # 危险按钮样式 - 红色圆角
         self.style.configure('Danger.TButton',
                           background=self.danger_color,
                           foreground='#ffffff',
                           font=('Segoe UI', 9, 'bold'),
-                          padding=(14, 8),
+                          padding=(16, 10),
                           borderwidth=0,
-                          relief='solid',
-                          focuscolor='none')
+                          relief='flat',
+                          focuscolor='none',
+                          borderradius=6)  # 圆角
         self.style.map('Danger.TButton',
                     background=[('active', '#ff6b5b'), ('pressed', '#c5221f')],
                     foreground=[('active', '#ffffff')])
         
-        # 输入框样式
+        # 输入框样式 - 圆角设计
         self.style.configure('Custom.TEntry',
                           fieldbackground=self.input_bg,
                           foreground=self.text_color,
@@ -230,22 +240,37 @@ class ScreenRecorder:
                           borderwidth=1,
                           relief='solid',
                           bordercolor=self.border_color,
-                          padding=4)
+                          padding=8,
+                          borderradius=4)  # 圆角
         self.style.map('Custom.TEntry',
                     fieldbackground=[('focus', self.input_bg)],
                     bordercolor=[('focus', self.accent_color)])
         
-        # 控制栏 - 使用卡片式设计
+        # 控制栏 - 现代化卡片式设计
         self.control_frame = tk.Frame(self.root, bg=self.card_bg, padx=24, pady=20)
-        self.control_frame.pack(fill=tk.X, side=tk.TOP)
+        self.control_frame.pack(fill=tk.X, side=tk.TOP, pady=(10, 10), padx=10)
+        # 添加圆角效果（通过模拟实现）
+        self.control_frame.configure(relief='flat')
         
         # 标题区域
         title_frame = tk.Frame(self.control_frame, bg=self.card_bg)
         title_frame.pack(side=tk.LEFT, fill=tk.Y, expand=True)
         
-        tk.Label(title_frame, text="屏幕录制工具", 
+        # 标题和使用流程的垂直容器
+        title_content_frame = tk.Frame(title_frame, bg=self.card_bg)
+        title_content_frame.pack(side=tk.LEFT, anchor=tk.CENTER, fill=tk.Y)
+        
+        title_label = tk.Label(title_content_frame, text="直播录制标记助手", 
                 font=('Arial', 18, 'bold'),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT, anchor=tk.CENTER)
+                bg=self.card_bg, fg=self.text_color)
+        title_label.pack(side=tk.TOP, anchor=tk.W)
+        
+        # 使用流程说明
+        instruction_label = tk.Label(title_content_frame, 
+                text="使用流程:工具以外打开直播画面一开始录屏一标记进度一结束录屏找到标记进度黄色标记截取需要的视频片段",
+                font=('Segoe UI', 9),
+                bg=self.card_bg, fg=self.secondary_text)
+        instruction_label.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(8, 0))
         
         # 按钮区域
         self.button_frame = tk.Frame(self.control_frame, bg=self.card_bg)
@@ -257,15 +282,15 @@ class ScreenRecorder:
         self.start_btn.grid(row=0, column=0, padx=8, pady=4)
         
         self.pause_btn = ttk.Button(self.button_frame, text="暂停录屏", command=self.pause_recording, 
-                                  style='Custom.TButton')
+                                  style='Custom.TButton', takefocus=False)
         # 初始状态隐藏
         
         self.stop_btn = ttk.Button(self.button_frame, text="结束录屏", command=self.stop_recording, 
                                   style='Danger.TButton')
         # 初始状态隐藏
         
-        self.mark_btn = ttk.Button(self.button_frame, text="标记进度", command=self.mark_progress, 
-                                  style='Custom.TButton')
+        self.mark_btn = ttk.Button(self.button_frame, text="标记进度[空格]", command=self.mark_progress, 
+                                  style='Custom.TButton', takefocus=False)
         # 初始状态隐藏
         
         # 添加分隔符
@@ -301,14 +326,14 @@ class ScreenRecorder:
         # 右侧面板宽度
         self.right_panel_width = 200
         
-        # 右侧视频片段面板
+        # 右侧视频片段面板 - 现代化设计
         self.right_frame = ttk.LabelFrame(self.main_frame, text="视频片段", padding=16, style='Custom.TLabelframe')
-        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 10), pady=10)
         self.right_frame.configure(width=self.right_panel_width)
         
-        # 视频资料库面板
+        # 视频资料库面板 - 现代化设计
         self.library_frame = ttk.LabelFrame(self.main_frame, text="视频资料库", padding=16, style='Custom.TLabelframe')
-        self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        self.library_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 10), pady=10)
         self.library_frame.pack_forget()  # 初始隐藏
         
         # 视频资料库搜索框
@@ -374,9 +399,9 @@ class ScreenRecorder:
         
 
         
-        # 视频预览 - 卡片式设计
+        # 视频预览 - 现代化卡片式设计
         self.video_frame = ttk.LabelFrame(self.left_frame, text="视频预览", padding=16, style='Custom.TLabelframe')
-        self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 16))
+        self.video_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 10), padx=10)
         
         # 视频文件名区域框架
         filename_frame = tk.Frame(self.video_frame, bg=self.card_bg)
@@ -466,6 +491,12 @@ class ScreenRecorder:
         self.pause_video_btn = ttk.Button(button_frame, text="暂停", command=self.pause_video, 
                                         state=tk.DISABLED, style='Custom.TButton')
         self.pause_video_btn.pack(side=tk.LEFT)
+        
+        # 视频状态提示
+        self.status_label = tk.Label(video_controls, text="状态: 未播放", 
+                                    bg=self.card_bg, fg=self.secondary_text, 
+                                    font=('Segoe UI', 9))
+        self.status_label.pack(side=tk.RIGHT, padx=10)
         
         # 进度条区域 - 卡片式设计
         self.progress_frame = ttk.LabelFrame(self.left_frame, text="进度", padding=16, style='Custom.TLabelframe')
@@ -613,6 +644,15 @@ class ScreenRecorder:
                   style='Custom.TButton').pack(side=tk.LEFT, padx=12)
         
         self.current_marker_index = -1
+        
+        # 添加空格键快捷键绑定 - 标记进度
+        def on_space_key(event):
+            # 如果正在录屏且处于暂停状态，不执行标记
+            if self.recording and self.paused:
+                return 'break'
+            self.mark_progress()
+            return 'break'  # 阻止空格键的默认行为
+        self.root.bind('<space>', on_space_key)
 
     def start_recording(self):
         screen_width, screen_height = pyautogui.size()
@@ -702,6 +742,10 @@ class ScreenRecorder:
             # 更新状态标签
             if hasattr(self, 'mini_status_label') and self.mini_status_label:
                 self.mini_status_label.config(text="已暂停", foreground='orange')
+            # 禁用标记进度按钮
+            self.mark_btn.config(state=tk.DISABLED)
+            if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
+                self.mini_mark_btn.config(state=tk.DISABLED)
             self.show_notification("暂停录屏", is_weak=True)
         else:
             self.pause_btn.config(text="暂停录屏")
@@ -711,6 +755,10 @@ class ScreenRecorder:
             # 更新状态标签
             if hasattr(self, 'mini_status_label') and self.mini_status_label:
                 self.mini_status_label.config(text="录屏中...", foreground='green')
+            # 启用标记进度按钮
+            self.mark_btn.config(state=tk.NORMAL)
+            if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
+                self.mini_mark_btn.config(state=tk.NORMAL)
             self.recording_start_time += time.time() - self.pause_time
             self.show_notification("继续录屏", is_weak=True)
     
@@ -1539,7 +1587,24 @@ class ScreenRecorder:
         # 更新提示信息
         self.update_hints()
     
-    def mark_progress(self):
+    def mark_progress(self, source="main"):
+        # 如果正在录屏且处于暂停状态，不允许标记进度
+        if self.recording and self.paused:
+            # 先关闭可能存在的鼠标移入提示
+            if hasattr(self, 'mark_btn_tooltip') and self.mark_btn_tooltip:
+                try:
+                    self.mark_btn_tooltip.destroy()
+                except:
+                    pass
+            parent = self.mini_window if hasattr(self, 'mini_window') and source == "mini" else None
+            self.show_notification("暂停状态下无法标记进度", is_weak=True, parent=parent)
+            return
+        
+        # 如果没有在录屏且没有打开视频文件，提示用户
+        if not self.recording and not self.video_file:
+            self.show_notification("请先开始录屏或打开视频文件", is_weak=True)
+            return
+        
         if self.recording or self.video_file:
             marker_time = self.current_time if self.video_file else time.time() - self.recording_start_time
             print(f"[调试] 添加标记: 时间={marker_time:.2f}")
@@ -1552,7 +1617,8 @@ class ScreenRecorder:
             for i, m in enumerate(self.markers):
                 print(f"[调试] 标记{i}: 时间={m['time']:.2f}")
             self.update_progress_bar()
-            self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True)
+            parent = self.mini_window if hasattr(self, 'mini_window') and source == "mini" else None
+            self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True, parent=parent)
             # 保存标记到文件
             self.save_markers_to_file()
     
@@ -2274,6 +2340,7 @@ class ScreenRecorder:
                 self.video_paused = False
                 self.play_btn.config(state=tk.DISABLED)
                 self.pause_video_btn.config(state=tk.NORMAL)
+                self.status_label.config(text="状态: 播放中", fg="#4CAF50")
             else:
                 # 停止状态或正在播放：从头开始播放
                 self.stop_video = True
@@ -2283,6 +2350,7 @@ class ScreenRecorder:
                 self.video_paused = False
                 self.play_btn.config(state=tk.DISABLED)
                 self.pause_video_btn.config(state=tk.NORMAL)
+                self.status_label.config(text="状态: 播放中", fg="#4CAF50")
                 self.video_thread = threading.Thread(target=self.play_video_thread)
                 self.video_thread.daemon = True
                 self.video_thread.start()
@@ -2371,6 +2439,7 @@ class ScreenRecorder:
         self.video_playing = False
         self.play_btn.config(state=tk.NORMAL)
         self.pause_video_btn.config(state=tk.DISABLED)
+        self.status_label.config(text="状态: 未播放", fg=self.secondary_text)
         # 播放结束时更新进度条到结束位置
         self.current_time = self.video_duration
         self.update_progress_bar()
@@ -2383,10 +2452,12 @@ class ScreenRecorder:
             # 暂停状态：启用播放按钮，禁用暂停按钮
             self.play_btn.config(state=tk.NORMAL)
             self.pause_video_btn.config(state=tk.DISABLED)
+            self.status_label.config(text="状态: 暂停中", fg="#9E9E9E")
         else:
             # 取消暂停：禁用播放按钮，启用暂停按钮
             self.play_btn.config(state=tk.DISABLED)
             self.pause_video_btn.config(state=tk.NORMAL)
+            self.status_label.config(text="状态: 播放中", fg="#4CAF50")
     
     def on_progress_click(self, event):
         if self.video_duration > 0:
@@ -2634,6 +2705,9 @@ class ScreenRecorder:
             canvas.create_text(130, 40, text=message, fill=self.text_color, font=('Arial', 10, 'bold'))
             
             # 计算位置，让通知显示在指定父窗口的上方
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            
             if parent is not None:
                 parent.update_idletasks()
                 parent_x = parent.winfo_x()
@@ -2641,10 +2715,18 @@ class ScreenRecorder:
                 parent_width = parent.winfo_width()
                 x = parent_x + (parent_width - 260) // 2  # 水平居中于弹窗
                 y = parent_y - 90  # 在弹窗上方显示
+                
+                # 确保通知在屏幕内
+                if x < 10:
+                    x = 10
+                if x + 260 > screen_width:
+                    x = screen_width - 270
+                if y < 10:
+                    y = parent_y + parent.winfo_height() + 10  # 如果上方不够，显示在下方
+                if y + 80 > screen_height:
+                    y = screen_height - 90
             else:
                 # 默认位置：屏幕右下角
-                screen_width = self.root.winfo_screenwidth()
-                screen_height = self.root.winfo_screenheight()
                 x = screen_width - 280
                 y = screen_height - 100
             weak_notification.geometry(f"260x80+{x}+{y}")
@@ -3143,23 +3225,34 @@ class ScreenRecorder:
                             messagebox.showerror("错误", "名称已存在")
                     window.destroy()
                 
-                window = tk.Toplevel(self.root)
+                window = tk.Toplevel(self.library_frame)
                 window.title("重命名")
-                window.geometry("300x150")
+                window.geometry("600x300")
                 window.resizable(False, False)
                 window.attributes('-topmost', True)
                 
-                tk.Label(window, text="新名称：").pack(pady=10)
+                # 计算弹窗位置，使其显示在视频资料库模块内
+                library_x = self.library_frame.winfo_x()
+                library_y = self.library_frame.winfo_y()
+                library_width = self.library_frame.winfo_width()
+                library_height = self.library_frame.winfo_height()
+                window_width = 600
+                window_height = 300
+                x = library_x + (library_width - window_width) // 2
+                y = library_y + (library_height - window_height) // 2
+                window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+                
+                tk.Label(window, text="新名称：", font=('Arial', 12)).pack(pady=20)
                 name_var = tk.StringVar(value=old_name)
-                entry = ttk.Entry(window, textvariable=name_var)
-                entry.pack(fill=tk.X, padx=20, pady=5)
+                entry = ttk.Entry(window, textvariable=name_var, font=('Arial', 12))
+                entry.pack(fill=tk.X, padx=40, pady=10)
                 entry.select_range(0, tk.END)
                 entry.focus()
                 
                 button_frame = tk.Frame(window)
-                button_frame.pack(pady=10)
-                ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=10)
-                ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=10)
+                button_frame.pack(pady=30)
+                ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=20)
+                ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=20)
             return
         
         # 检查是否选中了文件
@@ -3198,23 +3291,34 @@ class ScreenRecorder:
                                 messagebox.showerror("错误", "名称已存在")
                         window.destroy()
                     
-                    window = tk.Toplevel(self.root)
+                    window = tk.Toplevel(self.library_frame)
                     window.title("重命名")
-                    window.geometry("300x150")
+                    window.geometry("600x300")
                     window.resizable(False, False)
                     window.attributes('-topmost', True)
                     
-                    tk.Label(window, text="新名称：").pack(pady=10)
+                    # 计算弹窗位置，使其显示在视频资料库模块内
+                    library_x = self.library_frame.winfo_x()
+                    library_y = self.library_frame.winfo_y()
+                    library_width = self.library_frame.winfo_width()
+                    library_height = self.library_frame.winfo_height()
+                    window_width = 600
+                    window_height = 300
+                    x = library_x + (library_width - window_width) // 2
+                    y = library_y + (library_height - window_height) // 2
+                    window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+                    
+                    tk.Label(window, text="新名称：", font=('Arial', 12)).pack(pady=20)
                     name_var = tk.StringVar(value=old_name)
-                    entry = ttk.Entry(window, textvariable=name_var)
-                    entry.pack(fill=tk.X, padx=20, pady=5)
+                    entry = ttk.Entry(window, textvariable=name_var, font=('Arial', 12))
+                    entry.pack(fill=tk.X, padx=40, pady=10)
                     entry.select_range(0, tk.END)
                     entry.focus()
                     
                     button_frame = tk.Frame(window)
-                    button_frame.pack(pady=10)
-                    ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=10)
-                    ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=10)
+                    button_frame.pack(pady=30)
+                    ttk.Button(button_frame, text="确定", command=rename_item, style='Accent.TButton').pack(side=tk.LEFT, padx=20)
+                    ttk.Button(button_frame, text="取消", command=window.destroy, style='Custom.TButton').pack(side=tk.LEFT, padx=20)
     
     def delete_selected_item(self):
         """删除选中的项目"""
@@ -3274,27 +3378,117 @@ class ScreenRecorder:
         # 创建缩略功能区窗口 - 作为完全独立的窗口
         self.mini_window = tk.Toplevel()  # 不指定master，使其成为独立窗口
         self.mini_window.title("录屏控制")
-        self.mini_window.geometry("450x150")  # 增大窗口大小，确保能容纳所有内容
+        self.mini_window.geometry("560x180")  # 增大窗口大小，确保能容纳所有内容
         self.mini_window.attributes('-topmost', True)  # 始终显示在最前面
         self.mini_window.attributes('-toolwindow', True)  # 工具窗口风格
         self.mini_window.configure(bg="#1a1a1a")  # 直接使用颜色值，避免依赖主窗口
+        # 添加阴影效果（通过边框实现）
+        self.mini_window.configure(relief='flat', borderwidth=0)
         
         # 固定在屏幕顶部
-        self.mini_window.geometry("450x150+50+50")
+        self.mini_window.geometry("560x180+50+50")
         
         # 创建控制按钮
         button_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
         button_frame.pack(fill=tk.X, pady=20, padx=20)  # 增加边距
         
         # 创建按钮
-        self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10)
+        self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10, takefocus=False)
         self.mini_pause_btn.pack(side=tk.LEFT, padx=10)  # 增加按钮间距
         
         self.mini_stop_btn = ttk.Button(button_frame, text="结束录屏", command=self.stop_recording, width=10)
         self.mini_stop_btn.pack(side=tk.LEFT, padx=10)
         
-        self.mini_mark_btn = ttk.Button(button_frame, text="标记进度", command=self.mark_progress, width=10)
-        self.mini_mark_btn.pack(side=tk.LEFT, padx=10)
+        # 标记进度按钮容器
+        mark_btn_frame = tk.Frame(button_frame, bg="#1a1a1a")
+        mark_btn_frame.pack(side=tk.LEFT, padx=10)
+        
+        # 修改标记进度按钮颜色，使其更突出
+        self.mini_mark_btn = ttk.Button(mark_btn_frame, text="标记进度[空格]", 
+                                       command=lambda: self.mark_progress(source="mini"), width=14, takefocus=False)
+        # 配置按钮样式
+        self.mini_mark_btn.configure(style='Accent.TButton')
+        self.mini_mark_btn.pack(side=tk.LEFT)
+        
+        # 添加提示图形（圆形+？）
+        help_canvas = tk.Canvas(mark_btn_frame, width=20, height=20, bg="#1a1a1a", highlightthickness=0)
+        help_canvas.pack(side=tk.LEFT, padx=5)
+        # 绘制圆形
+        help_canvas.create_oval(2, 2, 18, 18, fill="#34a853", outline="white", width=2)
+        # 绘制问号
+        help_canvas.create_text(10, 12, text="?", fill="white", font=('Arial', 12, 'bold'))
+        
+        # 添加鼠标移入提示
+        def show_mark_tooltip(event):
+            # 销毁之前的提示窗口
+            if hasattr(self, 'mark_btn_tooltip') and self.mark_btn_tooltip:
+                try:
+                    self.mark_btn_tooltip.destroy()
+                except:
+                    pass
+            
+            # 创建提示窗口
+            tooltip = tk.Toplevel(self.mini_window)
+            tooltip.title("")
+            tooltip.geometry("320x80")
+            tooltip.transient(self.mini_window)
+            tooltip.overrideredirect(True)  # 无标题栏
+            tooltip.attributes('-topmost', True)
+            tooltip.attributes('-alpha', 0.9)  # 增加透明度，使其更明显
+            tooltip.configure(bg="#333", relief="solid", borderwidth=2, bd=2)
+            
+            # 添加提示文本
+            label = tk.Label(tooltip, 
+                            text="标记进度后视频进度条上将同步产生黄色标记，便于定位标记片段", 
+                            font=('Arial', 10), 
+                            bg="#333", fg="#fff",
+                            wraplength=300,  # 增加换行宽度
+                            justify=tk.LEFT)  # 左对齐
+            label.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # 计算位置 - 显示在按钮右侧，避免被遮挡
+            x = mark_btn_frame.winfo_rootx() + mark_btn_frame.winfo_width() + 10
+            y = mark_btn_frame.winfo_rooty()
+            
+            # 确保提示窗口在屏幕内
+            screen_width = tooltip.winfo_screenwidth()
+            screen_height = tooltip.winfo_screenheight()
+            tooltip_width = 320
+            tooltip_height = 80
+            
+            if x + tooltip_width > screen_width:
+                x = screen_width - tooltip_width - 10
+            if y + tooltip_height > screen_height:
+                y = screen_height - tooltip_height - 10
+            if y < 10:
+                y = 10
+            
+            tooltip.geometry(f"{tooltip_width}x{tooltip_height}+{x}+{y}")
+            
+            # 强制更新窗口
+            tooltip.update_idletasks()
+            tooltip.lift()
+            
+            # 存储tooltip引用
+            self.mark_btn_tooltip = tooltip
+        
+        def hide_mark_tooltip(event):
+            if hasattr(self, 'mark_btn_tooltip') and self.mark_btn_tooltip:
+                try:
+                    self.mark_btn_tooltip.destroy()
+                except:
+                    pass
+        
+        # 绑定事件到整个标记进度按钮区域
+        self.mini_mark_btn.bind("<Enter>", show_mark_tooltip)
+        self.mini_mark_btn.bind("<Leave>", hide_mark_tooltip)
+        help_canvas.bind("<Enter>", show_mark_tooltip)
+        help_canvas.bind("<Leave>", hide_mark_tooltip)
+        mark_btn_frame.bind("<Enter>", show_mark_tooltip)
+        mark_btn_frame.bind("<Leave>", hide_mark_tooltip)
+        
+        # 绑定事件到整个缩略功能区窗口
+        self.mini_window.bind("<Leave>", hide_mark_tooltip)
         
         # 添加状态标签
         self.mini_status_label = tk.Label(self.mini_window, text="录屏中...", 
@@ -3314,6 +3508,15 @@ class ScreenRecorder:
             self.mini_window.withdraw()
         
         self.mini_window.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # 在缩略功能区窗口上也绑定空格键 - 标记进度
+        def on_mini_space_key(event):
+            # 如果正在录屏且处于暂停状态，不执行标记
+            if self.recording and self.paused:
+                return 'break'
+            self.mark_progress(source="mini")
+            return 'break'  # 阻止空格键的默认行为
+        self.mini_window.bind('<space>', on_mini_space_key)
     
     def close_mini_control(self):
         """关闭缩略功能区"""
