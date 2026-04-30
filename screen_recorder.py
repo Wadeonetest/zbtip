@@ -1446,11 +1446,17 @@ class ScreenRecorder:
                         self.progress_canvas.addtag_withtag("yellow_marker", marker_id)
                         self.progress_canvas.addtag_withtag("yellow_marker", text_id)
                         
-                        # 绑定点击事件
+                        # 格式化时间显示
+                        marker_time_str = self.format_time(marker_time)
+                        
+                        # 绑定点击事件和鼠标移入移出事件
                         try:
-                            print(f"[调试] 标记索引: {idx}")
                             self.progress_canvas.tag_bind(marker_id, "<Button-1>", lambda e, i=idx: self.jump_to_marker_and_play(i))
                             self.progress_canvas.tag_bind(text_id, "<Button-1>", lambda e, i=idx: self.jump_to_marker_and_play(i))
+                            self.progress_canvas.tag_bind(marker_id, "<Enter>", lambda e, t=marker_time_str, x=marker_pos_x: self.show_marker_time_tooltip(t, x))
+                            self.progress_canvas.tag_bind(text_id, "<Enter>", lambda e, t=marker_time_str, x=marker_pos_x: self.show_marker_time_tooltip(t, x))
+                            self.progress_canvas.tag_bind(marker_id, "<Leave>", lambda e: self.hide_marker_time_tooltip())
+                            self.progress_canvas.tag_bind(text_id, "<Leave>", lambda e: self.hide_marker_time_tooltip())
                         except Exception as ex:
                             print(f"[调试] 标记绑定失败: {ex}")
                             pass
@@ -4270,6 +4276,25 @@ class ScreenRecorder:
                     f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {self.video_file}\n")
             except Exception as e:
                 print(f"保存录制路径失败: {e}")
+    
+    def show_marker_time_tooltip(self, time_str, x_pos):
+        """显示标记时间提示"""
+        self.hide_marker_time_tooltip()
+        
+        canvas_width = self.progress_canvas.winfo_width()
+        tooltip_x = min(x_pos, canvas_width - 60)
+        tooltip_x = max(10, tooltip_x)
+        
+        self.marker_tooltip = tk.Label(self.progress_canvas, text=time_str,
+                                       bg="#ffeb3b", fg="#000000", font=('Arial', 10, 'bold'),
+                                       padx=8, pady=4, relief='solid', bd=1)
+        self.marker_tooltip.place(x=tooltip_x - 30, y=25)
+    
+    def hide_marker_time_tooltip(self):
+        """隐藏标记时间提示"""
+        if hasattr(self, 'marker_tooltip') and self.marker_tooltip:
+            self.marker_tooltip.destroy()
+            self.marker_tooltip = None
     
     def format_time(self, seconds):
         """格式化时间（支持小时显示）"""
