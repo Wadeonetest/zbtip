@@ -290,7 +290,7 @@ class ScreenRecorder:
         # 初始状态隐藏
         
         self.mark_btn = ttk.Button(self.button_frame, text="标记进度[空格]", command=self.mark_progress, 
-                                  style='Custom.TButton', takefocus=False)
+                                  style='Accent.TButton', takefocus=False)
         # 初始状态隐藏
         
         # 添加分隔符
@@ -733,8 +733,31 @@ class ScreenRecorder:
         self.show_notification("开始录屏", is_weak=True)
     
     def pause_recording(self):
-        self.paused = not self.paused
         if self.paused:
+            # 从暂停状态恢复
+            self.paused = False
+            self.pause_btn.config(text="暂停录屏")
+            # 更新缩略功能区的按钮文本
+            if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
+                self.mini_pause_btn.config(text="暂停录屏")
+            # 更新状态标签
+            if hasattr(self, 'mini_status_label') and self.mini_status_label:
+                self.mini_status_label.config(text="录屏中...", foreground='green')
+            # 启用标记进度按钮
+            self.mark_btn.config(state=tk.NORMAL)
+            if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
+                self.mini_mark_btn.config(state=tk.NORMAL)
+            # 调整 recording_start_time，跳过暂停的时间
+            if hasattr(self, 'pause_start_time'):
+                pause_duration = time.time() - self.pause_start_time
+                self.recording_start_time += pause_duration
+                delattr(self, 'pause_start_time')
+            self.show_notification("继续录屏", is_weak=True)
+        else:
+            # 进入暂停状态
+            self.paused = True
+            # 记录暂停开始时间
+            self.pause_start_time = time.time()
             self.pause_btn.config(text="继续录屏")
             # 更新缩略功能区的按钮文本
             if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
@@ -747,25 +770,13 @@ class ScreenRecorder:
             if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
                 self.mini_mark_btn.config(state=tk.DISABLED)
             self.show_notification("暂停录屏", is_weak=True)
-        else:
-            self.pause_btn.config(text="暂停录屏")
-            # 更新缩略功能区的按钮文本
-            if hasattr(self, 'mini_pause_btn') and self.mini_pause_btn:
-                self.mini_pause_btn.config(text="暂停录屏")
-            # 更新状态标签
-            if hasattr(self, 'mini_status_label') and self.mini_status_label:
-                self.mini_status_label.config(text="录屏中...", foreground='green')
-            # 启用标记进度按钮
-            self.mark_btn.config(state=tk.NORMAL)
-            if hasattr(self, 'mini_mark_btn') and self.mini_mark_btn:
-                self.mini_mark_btn.config(state=tk.NORMAL)
-            self.recording_start_time += time.time() - self.pause_time
-            self.show_notification("继续录屏", is_weak=True)
     
     def stop_recording(self):
         self.recording = False
-        if self.paused:
-            self.recording_start_time += time.time() - self.pause_time
+        # 如果处于暂停状态，先调整 recording_start_time
+        if self.paused and hasattr(self, 'pause_start_time'):
+            self.recording_start_time += time.time() - self.pause_start_time
+            delattr(self, 'pause_start_time')
         # 未录制时：显示开始按钮，隐藏暂停、结束、标记按钮
         self.pause_btn.grid_remove()
         self.stop_btn.grid_remove()
@@ -791,16 +802,6 @@ class ScreenRecorder:
         if self.video_file and os.path.exists(self.video_file):
             # 计算视频实际时长
             self.calculate_video_duration()
-            
-            # 调整标记时间，确保与视频实际时长匹配
-            if self.video_duration > 0 and self.markers:
-                # 录制时的总时长
-                recorded_duration = time.time() - self.recording_start_time
-                if recorded_duration > 0:
-                    # 计算时间比例，调整标记时间
-                    time_ratio = self.video_duration / recorded_duration
-                    for marker in self.markers:
-                        marker["time"] = marker["time"] * time_ratio
             
             # 保存当前视频的标记和片段
             self.video_markers[self.video_file] = self.markers.copy()
@@ -1297,8 +1298,8 @@ class ScreenRecorder:
                 self.recorded_frames += 1
                 time.sleep(0.05)
             else:
-                if not hasattr(self, 'pause_time'):
-                    self.pause_time = time.time()
+                # 每次暂停时都更新 pause_start_time
+                self.pause_start_time = time.time()
                 time.sleep(0.1)
     
     def save_markers_to_file(self):
@@ -1562,7 +1563,10 @@ class ScreenRecorder:
     def update_progress(self):
         while not self.stop_update:
             if self.recording:
-                self.current_time = time.time() - self.recording_start_time
+                # 录屏时：根据实际录制帧数计算时间，确保与视频时长一致
+                if not self.paused:
+                    # 使用实际录制帧数计算时间（20fps）
+                    self.current_time = self.recorded_frames / 20.0
             elif self.video_duration > 0 and self.video_playing and not self.progress_bar_dragging:
                 if not self.video_paused:
                     self.current_time += 0.1
@@ -1596,8 +1600,11 @@ class ScreenRecorder:
                     self.mark_btn_tooltip.destroy()
                 except:
                     pass
-            parent = self.mini_window if hasattr(self, 'mini_window') and source == "mini" else None
-            self.show_notification("暂停状态下无法标记进度", is_weak=True, parent=parent)
+            # 显示在缩略功能区下方（如果有）
+            if hasattr(self, 'mini_window') and self.mini_window:
+                self.show_notification("暂停状态下无法标记进度", is_weak=True, parent=self.mini_window)
+            else:
+                self.show_notification("暂停状态下无法标记进度", is_weak=True)
             return
         
         # 如果没有在录屏且没有打开视频文件，提示用户
@@ -1606,7 +1613,8 @@ class ScreenRecorder:
             return
         
         if self.recording or self.video_file:
-            marker_time = self.current_time if self.video_file else time.time() - self.recording_start_time
+            # 统一使用 self.current_time，确保主页面和缩略功能区一致
+            marker_time = self.current_time
             print(f"[调试] 添加标记: 时间={marker_time:.2f}")
             marker = {
                 "id": self.marker_count + 1, "name": str(self.marker_count + 1), "time": marker_time, "note": ""
@@ -1617,8 +1625,11 @@ class ScreenRecorder:
             for i, m in enumerate(self.markers):
                 print(f"[调试] 标记{i}: 时间={m['time']:.2f}")
             self.update_progress_bar()
-            parent = self.mini_window if hasattr(self, 'mini_window') and source == "mini" else None
-            self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True, parent=parent)
+            # 显示在缩略功能区下方（如果有）
+            if hasattr(self, 'mini_window') and self.mini_window:
+                self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True, parent=self.mini_window)
+            else:
+                self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True)
             # 保存标记到文件
             self.save_markers_to_file()
     
@@ -2713,22 +2724,38 @@ class ScreenRecorder:
                 parent_x = parent.winfo_x()
                 parent_y = parent.winfo_y()
                 parent_width = parent.winfo_width()
+                # 在父窗口（缩略功能区）下方显示
                 x = parent_x + (parent_width - 260) // 2  # 水平居中于弹窗
-                y = parent_y - 90  # 在弹窗上方显示
+                y = parent_y + parent.winfo_height() + 10  # 在弹窗下方显示
                 
                 # 确保通知在屏幕内
                 if x < 10:
                     x = 10
                 if x + 260 > screen_width:
                     x = screen_width - 270
-                if y < 10:
-                    y = parent_y + parent.winfo_height() + 10  # 如果上方不够，显示在下方
                 if y + 80 > screen_height:
                     y = screen_height - 90
             else:
-                # 默认位置：屏幕右下角
-                x = screen_width - 280
-                y = screen_height - 100
+                # 如果没有指定父窗口，但有缩略功能区窗口，显示在缩略功能区下方
+                if hasattr(self, 'mini_window') and self.mini_window:
+                    self.mini_window.update_idletasks()
+                    mini_x = self.mini_window.winfo_x()
+                    mini_y = self.mini_window.winfo_y()
+                    mini_width = self.mini_window.winfo_width()
+                    x = mini_x + (mini_width - 260) // 2  # 水平居中于缩略功能区
+                    y = mini_y + self.mini_window.winfo_height() + 10  # 在缩略功能区下方显示
+                    
+                    # 确保通知在屏幕内
+                    if x < 10:
+                        x = 10
+                    if x + 260 > screen_width:
+                        x = screen_width - 270
+                    if y + 80 > screen_height:
+                        y = screen_height - 90
+                else:
+                    # 默认位置：屏幕右下角
+                    x = screen_width - 280
+                    y = screen_height - 100
             weak_notification.geometry(f"260x80+{x}+{y}")
             
             # 显示通知
