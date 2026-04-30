@@ -271,7 +271,7 @@ class ScreenRecorder:
         
         # 使用流程说明
         instruction_label = tk.Label(title_content_frame, 
-                text="使用流程:工具以外打开直播画面一开始录屏一标记进度一结束录屏找到标记进度黄色标记截取需要的视频片段",
+                text="使用流程:工具以外打开直播画面 → 开始录屏 → 标记进度 → 结束录屏 → 找到标记进度黄色标记截取需要的视频片段",
                 font=('Segoe UI', 9),
                 bg=self.card_bg, fg=self.secondary_text)
         instruction_label.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(8, 0))
