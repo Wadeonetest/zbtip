@@ -12,6 +12,13 @@ import json
 import subprocess
 from PIL import Image, ImageTk
 
+# 尝试导入imageio_ffmpeg用于快速视频裁剪
+try:
+    import imageio_ffmpeg
+    IMAGEIO_FFMPEG_AVAILABLE = True
+except ImportError:
+    IMAGEIO_FFMPEG_AVAILABLE = False
+
 # 尝试导入watchdog库用于文件系统监控
 try:
     from watchdog.observers import Observer
@@ -1699,49 +1706,70 @@ class ScreenRecorder:
                             clip_filename = f"{video_filename}片段 {clip['id']}.avi"
                         clip_path = os.path.join(os.path.dirname(self.video_file), self.clip_dir, clip_filename)
                         
-                        # 打开原始视频
+                        # 获取视频信息并使用FFmpeg快速裁剪
                         cap = cv2.VideoCapture(self.video_file)
                         if cap.isOpened():
                             fps = cap.get(cv2.CAP_PROP_FPS)
                             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            
-                            # 计算开始和结束帧
-                            start_frame = int(clip["start"] * fps)
-                            end_frame = int(clip["end"] * fps)
-                            
-                            # 创建视频写入器
-                            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                            out = cv2.VideoWriter(clip_path, fourcc, fps, (width, height))
-                            
-                            # 设置起始帧
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-                            
-                            # 读取并写入帧
-                            current_frame = start_frame
-                            while current_frame <= end_frame and cap.isOpened():
-                                ret, frame = cap.read()
-                                if not ret:
-                                    break
-                                out.write(frame)
-                                current_frame += 1
-                            
-                            # 释放资源
                             cap.release()
-                            out.release()
                             
-                            print(f"剪辑已保存到: {clip_path}")
+                            # 计算开始时间和持续时间
+                            start_time = clip["start"]
+                            duration = clip["end"] - clip["start"]
+                            
+                            # 使用FFmpeg快速裁剪（速度比cv2逐帧处理快10-50倍）
+                            if IMAGEIO_FFMPEG_AVAILABLE:
+                                try:
+                                    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                                    
+                                    # Windows路径处理：转换为正斜杠
+                                    input_path = self.video_file.replace('\\', '/').replace(':', '\\\\:')
+                                    output_path = clip_path.replace('\\', '/').replace(':', '\\\\:')
+                                    
+                                    # FFmpeg命令：-ss指定开始时间，-t指定持续时间，-c copy表示直接复制流不重新编码
+                                    cmd = [
+                                        ffmpeg_exe,
+                                        '-y',  # 覆盖输出文件
+                                        '-ss', str(start_time),
+                                        '-i', input_path,
+                                        '-t', str(duration),
+                                        '-c', 'copy',  # 直接复制，不重新编码，速度最快
+                                        '-avoid_negative_ts', 'make_zero',
+                                        output_path
+                                    ]
+                                    
+                                    result = subprocess.run(cmd, capture_output=True, text=True)
+                                    if result.returncode != 0:
+                                        # 如果copy模式失败，尝试重新编码模式
+                                        cmd_reencode = [
+                                            ffmpeg_exe,
+                                            '-y',
+                                            '-ss', str(start_time),
+                                            '-i', input_path,
+                                            '-t', str(duration),
+                                            '-c:v', 'libx264',  # 使用H.264编码
+                                            '-preset', 'ultrafast',  # 最快预设
+                                            '-c:a', 'aac',
+                                            output_path
+                                        ]
+                                        result = subprocess.run(cmd_reencode, capture_output=True, text=True)
+                                    
+                                    print(f"剪辑已保存到: {clip_path}")
+                                except Exception as ffmpeg_err:
+                                    print(f"FFmpeg裁剪失败，回退到cv2方式: {ffmpeg_err}")
+                                    self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                            else:
+                                # 没有FFmpeg，使用cv2方式
+                                self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
                             
                             # 保存片段信息到video_clips字典
                             if self.video_file not in self.video_clips:
                                 self.video_clips[self.video_file] = []
-                            # 检查片段是否已存在
                             existing_clip = next((c for c in self.video_clips[self.video_file] if c['id'] == clip['id']), None)
                             if existing_clip:
-                                # 更新现有片段
                                 existing_clip.update(clip)
                             else:
-                                # 添加新片段
                                 self.video_clips[self.video_file].append(clip.copy())
                         else:
                             print("无法打开原始视频文件")
@@ -4295,6 +4323,31 @@ class ScreenRecorder:
         if hasattr(self, 'marker_tooltip') and self.marker_tooltip:
             self.marker_tooltip.destroy()
             self.marker_tooltip = None
+    
+    def extract_clip_with_cv2(self, clip, clip_path, fps, width, height):
+        """使用cv2方式提取视频片段（回退方案）"""
+        cap = cv2.VideoCapture(self.video_file)
+        if cap.isOpened():
+            start_frame = int(clip["start"] * fps)
+            end_frame = int(clip["end"] * fps)
+            
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out = cv2.VideoWriter(clip_path, fourcc, fps, (width, height))
+            
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            
+            current_frame = start_frame
+            while current_frame <= end_frame and cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                out.write(frame)
+                current_frame += 1
+            
+            cap.release()
+            out.release()
+        else:
+            print("无法打开原始视频文件")
     
     def format_time(self, seconds):
         """格式化时间（支持小时显示）"""
