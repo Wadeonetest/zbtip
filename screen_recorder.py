@@ -68,7 +68,11 @@ class DatabaseManager:
         
         conn.commit()
         conn.close()
-    
+
+    def get_beijing_time(self):
+        """获取北京时区当前时间（UTC+8）"""
+        return (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S')
+
     def hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
     
@@ -77,10 +81,11 @@ class DatabaseManager:
         cursor = conn.cursor()
         try:
             password_hash = self.hash_password(password)
+            now = self.get_beijing_time()
             cursor.execute('''
-                INSERT INTO users (email, phone, password_hash, nickname, login_type)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (email, phone, password_hash, nickname, login_type))
+                INSERT INTO users (email, phone, password_hash, nickname, login_type, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (email, phone, password_hash, nickname, login_type, now, now))
             user_id = cursor.lastrowid
             conn.commit()
             return user_id
@@ -122,56 +127,58 @@ class DatabaseManager:
     def update_last_login(self, user_id):
         conn = self.get_connection()
         cursor = conn.cursor()
+        now = self.get_beijing_time()
         cursor.execute('''
-            UPDATE users 
-            SET last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+            UPDATE users
+            SET last_login_at = ?, updated_at = ?
             WHERE id = ?
-        ''', (user_id,))
+        ''', (now, now, user_id))
         conn.commit()
         conn.close()
     
     def purchase_vip(self, user_id, vip_type, vip_name, duration_days, amount):
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         purchase_id = str(uuid.uuid4())
         order_no = f"VIP{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        
-        start_at = datetime.now()
-        expire_at = start_at + timedelta(days=duration_days) if duration_days else None
-        
+
+        start_at = self.get_beijing_time()
+        expire_at = (datetime.strptime(start_at, '%Y-%m-%d %H:%M:%S') + timedelta(days=duration_days)).strftime('%Y-%m-%d %H:%M:%S') if duration_days else None
+
         cursor.execute('''
-            INSERT INTO vip_purchases 
-            (id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (purchase_id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount))
-        
+            INSERT INTO vip_purchases
+            (id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (purchase_id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, start_at))
+
         self._update_user_vip_status(cursor, user_id)
-        
+
         conn.commit()
         conn.close()
         return purchase_id
     
     def _update_user_vip_status(self, cursor, user_id):
+        now = self.get_beijing_time()
         cursor.execute('''
             SELECT 1 FROM vip_purchases
             WHERE user_id = ? AND status = 1
-            AND (expire_at IS NULL OR expire_at > CURRENT_TIMESTAMP)
+            AND (expire_at IS NULL OR expire_at > ?)
             LIMIT 1
-        ''', (user_id,))
+        ''', (user_id, now))
         is_vip = 1 if cursor.fetchone() else 0
-        
+
         cursor.execute('''
             SELECT MAX(expire_at) as latest_expire FROM vip_purchases
             WHERE user_id = ? AND status = 1
         ''', (user_id,))
         latest_expire = cursor.fetchone()['latest_expire']
-        
+
         cursor.execute('''
             UPDATE users
-            SET is_vip = ?, vip_expire_at = ?, updated_at = CURRENT_TIMESTAMP
+            SET is_vip = ?, vip_expire_at = ?, updated_at = ?
             WHERE id = ?
-        ''', (is_vip, latest_expire, user_id))
+        ''', (is_vip, latest_expire, now, user_id))
     
     def get_user_vip_status(self, user_id):
         user = self.get_user_by_id(user_id)
@@ -3378,10 +3385,11 @@ class ScreenRecorder:
 
             import hashlib
             password_hash = hashlib.sha256(new_pwd.encode()).hexdigest()
+            now = self.db.get_beijing_time()
             conn = self.db.get_connection()
             cursor = conn.cursor()
-            cursor.execute("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                         (password_hash, user['id']))
+            cursor.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+                         (password_hash, now, user['id']))
             conn.commit()
             conn.close()
 
