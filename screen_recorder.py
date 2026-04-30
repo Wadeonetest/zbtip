@@ -84,6 +84,10 @@ class ScreenRecorder:
         self.progress_bar_dragging = False
         self.video_lock = threading.Lock()  # 视频操作锁，防止多线程冲突
         
+        # 用户账号相关变量
+        self.is_logged_in = False  # 用户登录状态
+        self.current_user = None  # 当前用户信息
+        
         # 存储每个视频文件对应的标记列表
         self.video_markers = {}
         
@@ -314,6 +318,11 @@ class ScreenRecorder:
         self.video_library_btn = ttk.Button(self.button_frame, text="视频资料库", command=self.show_video_library, 
                                            style='Custom.TButton')
         self.video_library_btn.grid(row=0, column=7, padx=8, pady=4)
+        
+        # 用户头像按钮（在最小化按钮左边）
+        self.user_avatar_btn = ttk.Button(self.button_frame, text="👤", command=self.show_login_dialog, 
+                                         style='Custom.TButton', width=4)
+        self.user_avatar_btn.grid(row=0, column=8, padx=8, pady=4)
 
         # 主框架 - 使用Frame和pack布局
         self.main_frame = tk.Frame(self.root, bg=self.bg_color, padx=20, pady=20)
@@ -655,6 +664,11 @@ class ScreenRecorder:
         self.root.bind('<space>', on_space_key)
 
     def start_recording(self):
+        # 检查登录状态，如果未登录则打开登录弹窗
+        if not self.is_logged_in:
+            self.show_login_dialog()
+            return
+        
         screen_width, screen_height = pyautogui.size()
         self.x = 0
         self.y = 0
@@ -2678,6 +2692,648 @@ class ScreenRecorder:
         except ValueError:
             pass
     
+    def show_login_dialog(self):
+        """显示账号登录弹窗"""
+        if self.is_logged_in and self.current_user:
+            self.show_user_info()
+            return
+        
+        # 创建弹窗
+        self.login_dialog = tk.Toplevel(self.root)
+        self.login_dialog.title("账号登录")
+        self.login_dialog.geometry("500x700")
+        self.login_dialog.resizable(False, False)
+        self.login_dialog.attributes('-topmost', True)
+        self.login_dialog.configure(bg="#252525")
+        
+        # 居中显示
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - 500) // 2
+        y = (screen_height - 700) // 2
+        self.login_dialog.geometry(f"500x700+{x}+{y}")
+        
+        # ========== 标题区域 ==========
+        title_frame = tk.Frame(self.login_dialog, bg="#4CAF50", padx=20, pady=25)
+        title_frame.pack(fill=tk.X)
+        
+        title_label = tk.Label(title_frame, text="登录后即可免费使用录屏功能", 
+                              font=('Arial', 16, 'bold'),
+                              bg="#4CAF50", fg="#ffffff")
+        title_label.pack()
+        
+        # ========== 内容区域 ==========
+        content_frame = tk.Frame(self.login_dialog, bg="#252525", padx=30, pady=30)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 登录/注册切换（使用按钮样式）
+        self.login_mode = tk.StringVar(value="login")
+        
+        mode_frame = tk.Frame(content_frame, bg="#252525")
+        mode_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        def update_mode_buttons():
+            if self.login_mode.get() == "login":
+                login_btn.config(bg="#4CAF50", fg="#ffffff", relief='sunken')
+                register_btn.config(bg="#333333", fg="#b0b0b0", relief='flat')
+                self.submit_btn.config(text="登录")
+            else:
+                login_btn.config(bg="#333333", fg="#b0b0b0", relief='flat')
+                register_btn.config(bg="#4CAF50", fg="#ffffff", relief='sunken')
+                self.submit_btn.config(text="注册")
+            self.switch_login_method()
+        
+        login_btn = tk.Button(mode_frame, text="登录", bg="#4CAF50", fg="#ffffff", 
+                             font=('Arial', 12, 'bold'), relief='sunken', padx=24, pady=8,
+                             command=lambda: self.login_mode.set("login"))
+        login_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        register_btn = tk.Button(mode_frame, text="注册", bg="#333333", fg="#b0b0b0", 
+                                font=('Arial', 12), relief='flat', padx=24, pady=8,
+                                command=lambda: self.login_mode.set("register"))
+        register_btn.pack(side=tk.LEFT)
+        
+        self.login_mode.trace('w', lambda *args: update_mode_buttons())
+        
+        # 登录方式选择（使用按钮样式）
+        self.login_method = tk.StringVar(value="email")
+        
+        method_label = tk.Label(content_frame, text="选择登录方式", bg="#252525", fg="#ffffff", font=('Arial', 11))
+        method_label.pack(anchor=tk.W, pady=(0, 10))
+        
+        method_frame = tk.Frame(content_frame, bg="#252525")
+        method_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        def update_method_buttons():
+            method = self.login_method.get()
+            email_btn.config(bg="#4CAF50" if method == "email" else "#333333",
+                           fg="#ffffff" if method == "email" else "#b0b0b0",
+                           relief='sunken' if method == "email" else 'flat')
+            phone_btn.config(bg="#4CAF50" if method == "phone" else "#333333",
+                           fg="#ffffff" if method == "phone" else "#b0b0b0",
+                           relief='sunken' if method == "phone" else 'flat')
+            wechat_btn.config(bg="#4CAF50" if method == "wechat" else "#333333",
+                            fg="#ffffff" if method == "wechat" else "#b0b0b0",
+                            relief='sunken' if method == "wechat" else 'flat')
+        
+        email_btn = tk.Button(method_frame, text="📧 邮箱", bg="#4CAF50", fg="#ffffff", 
+                            font=('Arial', 11), relief='sunken', padx=16, pady=8,
+                            command=lambda: self.login_method.set("email"))
+        email_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        phone_btn = tk.Button(method_frame, text="📱 手机号", bg="#333333", fg="#b0b0b0", 
+                            font=('Arial', 11), relief='flat', padx=16, pady=8,
+                            command=lambda: self.login_method.set("phone"))
+        phone_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        wechat_btn = tk.Button(method_frame, text="💬 微信", bg="#333333", fg="#b0b0b0", 
+                             font=('Arial', 11), relief='flat', padx=16, pady=8,
+                             command=lambda: self.login_method.set("wechat"))
+        wechat_btn.pack(side=tk.LEFT)
+        
+        self.login_method.trace('w', lambda *args: (update_method_buttons(), self.switch_login_method()))
+        
+        # 表单区域
+        self.form_frame = tk.Frame(content_frame, bg="#252525")
+        self.form_frame.pack(fill=tk.X)
+        
+        # 显示默认表单
+        self.show_email_form_simple()
+        
+        # 登录按钮
+        self.submit_btn = tk.Button(content_frame, text="登录", command=self.handle_login, 
+                                    bg="#4CAF50", fg="#ffffff", font=('Arial', 12, 'bold'),
+                                    relief='flat', padx=16, pady=10)
+        self.submit_btn.pack(fill=tk.X, pady=20)
+        
+        # 忘记密码
+        forget_pwd_label = tk.Label(content_frame, text="忘记密码？", 
+                                    fg="#4CAF50", cursor="hand2",
+                                    bg="#252525")
+        forget_pwd_label.pack(side=tk.RIGHT)
+        forget_pwd_label.bind("<Button-1>", lambda e: self.show_notification("忘记密码功能开发中", is_weak=True))
+        
+        # 绑定模式切换
+        self.login_mode.trace('w', lambda *args: self.on_mode_change_simple())
+        
+        # 强制刷新
+        self.login_dialog.update_idletasks()
+    
+    def show_email_form_simple(self):
+        """简化版邮箱表单"""
+        for widget in self.form_frame.winfo_children():
+            widget.destroy()
+        
+        email_label = tk.Label(self.form_frame, text="邮箱", bg="#252525", fg="#ffffff", font=('Arial', 12))
+        email_label.pack(anchor=tk.W, pady=(0, 5))
+        self.email_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff", 
+                                   insertbackground='white', font=('Arial', 12), bd=1, relief='solid')
+        self.email_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        pwd_label = tk.Label(self.form_frame, text="密码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+        pwd_label.pack(anchor=tk.W, pady=(0, 5))
+        self.pwd_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff", 
+                                  insertbackground='white', font=('Arial', 12), bd=1, relief='solid', show='*')
+        self.pwd_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        if self.login_mode.get() == "register":
+            confirm_pwd_label = tk.Label(self.form_frame, text="确认密码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+            confirm_pwd_label.pack(anchor=tk.W, pady=(0, 5))
+            self.confirm_pwd_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff", 
+                                              insertbackground='white', font=('Arial', 12), bd=1, relief='solid', show='*')
+            self.confirm_pwd_entry.pack(fill=tk.X, pady=(0, 15))
+    
+    def show_phone_form_simple(self):
+        """简化版手机号表单"""
+        for widget in self.form_frame.winfo_children():
+            widget.destroy()
+        
+        phone_label = tk.Label(self.form_frame, text="手机号", bg="#252525", fg="#ffffff", font=('Arial', 12))
+        phone_label.pack(anchor=tk.W, pady=(0, 5))
+        self.phone_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff", 
+                                    insertbackground='white', font=('Arial', 12), bd=1, relief='solid')
+        self.phone_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        code_frame = tk.Frame(self.form_frame, bg="#252525")
+        code_frame.pack(fill=tk.X)
+        
+        code_label = tk.Label(code_frame, text="验证码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+        code_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        code_entry_frame = tk.Frame(code_frame, bg="#252525")
+        code_entry_frame.pack(fill=tk.X)
+        
+        self.code_entry = tk.Entry(code_entry_frame, bg="#2d2d2d", fg="#ffffff", 
+                                   insertbackground='white', font=('Arial', 12), bd=1, relief='solid', width=20)
+        self.code_entry.pack(side=tk.LEFT)
+        
+        self.send_code_btn = tk.Button(code_entry_frame, text="发送验证码", command=self.send_sms_code,
+                                       bg="#333333", fg="#ffffff", font=('Arial', 11), 
+                                       relief='flat', padx=10, pady=5)
+        self.send_code_btn.pack(side=tk.RIGHT)
+        
+        if self.login_mode.get() == "register":
+            pwd_label = tk.Label(self.form_frame, text="设置密码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+            pwd_label.pack(anchor=tk.W, pady=(15, 5))
+            self.phone_pwd_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff", 
+                                             insertbackground='white', font=('Arial', 12), bd=1, relief='solid', show='*')
+            self.phone_pwd_entry.pack(fill=tk.X)
+    
+    def show_wechat_form_simple(self):
+        """简化版微信表单"""
+        for widget in self.form_frame.winfo_children():
+            widget.destroy()
+        
+        qr_frame = tk.Frame(self.form_frame, bg="#333333", padx=40, pady=20)
+        qr_frame.pack(fill=tk.X)
+        
+        qr_canvas = tk.Canvas(qr_frame, width=180, height=180, bg="#ffffff")
+        qr_canvas.pack(pady=10)
+        
+        # 绘制二维码图案
+        qr_canvas.create_rectangle(0, 0, 180, 180, fill="#ffffff", outline="#ccc", width=2)
+        
+        # 左上角定位点
+        qr_canvas.create_rectangle(8, 8, 40, 40, fill="#000000")
+        qr_canvas.create_rectangle(14, 14, 34, 34, fill="#ffffff")
+        qr_canvas.create_rectangle(20, 20, 28, 28, fill="#000000")
+        
+        # 右上角定位点
+        qr_canvas.create_rectangle(140, 8, 172, 40, fill="#000000")
+        qr_canvas.create_rectangle(146, 14, 166, 34, fill="#ffffff")
+        qr_canvas.create_rectangle(152, 20, 160, 28, fill="#000000")
+        
+        # 左下角定位点
+        qr_canvas.create_rectangle(8, 140, 40, 172, fill="#000000")
+        qr_canvas.create_rectangle(14, 146, 34, 166, fill="#ffffff")
+        qr_canvas.create_rectangle(20, 152, 28, 160, fill="#000000")
+        
+        # 绘制随机点阵
+        for i in range(10):
+            for j in range(10):
+                if not (i < 4 and j < 4) and not (i < 4 and j > 5) and not (i > 5 and j < 4):
+                    if (i + j) % 2 == 0:
+                        x = 45 + i * 13
+                        y = 45 + j * 13
+                        qr_canvas.create_rectangle(x, y, x+11, y+11, fill="#000000")
+        
+        qr_label = tk.Label(qr_frame, text="微信扫码登录", bg="#333333", fg="#ffffff", font=('Arial', 12))
+        qr_label.pack(pady=(10, 0))
+        
+        tip_label = tk.Label(self.form_frame, text="请打开微信扫一扫，扫描上方二维码", 
+                            bg="#252525", fg="#b0b0b0", font=('Arial', 10))
+        tip_label.pack(pady=10)
+    
+    def switch_login_method(self):
+        """切换登录方式"""
+        method = self.login_method.get()
+        if method == "email":
+            self.show_email_form_simple()
+        elif method == "phone":
+            self.show_phone_form_simple()
+        elif method == "wechat":
+            self.show_wechat_form_simple()
+    
+    def on_mode_change_simple(self):
+        """模式切换处理"""
+        mode = self.login_mode.get()
+        if mode == "login":
+            self.submit_btn.config(text="登录")
+        else:
+            self.submit_btn.config(text="注册")
+        self.switch_login_method()
+    
+    def send_sms_code(self):
+        """发送验证码"""
+        phone = self.phone_entry.get().strip()
+        if not phone:
+            self.show_notification("请输入手机号", is_weak=True)
+            return
+        
+        if len(phone) != 11:
+            self.show_notification("请输入正确的手机号", is_weak=True)
+            return
+        
+        self.send_code_btn.config(state=tk.DISABLED, text="发送中...")
+        self.login_dialog.after(1000, lambda: self.send_code_btn.config(state=tk.NORMAL, text="60秒后重发"))
+        self.show_notification("验证码已发送", is_weak=True)
+    
+    def handle_login(self):
+        """处理登录"""
+        method = self.login_method.get()
+        mode = self.login_mode.get()
+        
+        if method == "email":
+            email = self.email_entry.get().strip()
+            pwd = self.pwd_entry.get().strip()
+            
+            if not email or not pwd:
+                self.show_notification("请填写完整信息", is_weak=True)
+                return
+            
+            if not "@" in email:
+                self.show_notification("请输入正确的邮箱格式", is_weak=True)
+                return
+            
+            if mode == "register":
+                confirm_pwd = self.confirm_pwd_entry.get().strip()
+                if pwd != confirm_pwd:
+                    self.show_notification("两次输入的密码不一致", is_weak=True)
+                    return
+                self.show_notification("注册成功，请登录", is_weak=True)
+                self.login_mode.set("login")
+            else:
+                self.do_login(email)
+        
+        elif method == "phone":
+            phone = self.phone_entry.get().strip()
+            code = self.code_entry.get().strip()
+            
+            if not phone or not code:
+                self.show_notification("请填写完整信息", is_weak=True)
+                return
+            
+            if len(phone) != 11:
+                self.show_notification("请输入正确的手机号", is_weak=True)
+                return
+            
+            if len(code) != 6:
+                self.show_notification("请输入6位验证码", is_weak=True)
+                return
+            
+            if mode == "register":
+                pwd = self.phone_pwd_entry.get().strip()
+                if not pwd:
+                    self.show_notification("请设置密码", is_weak=True)
+                    return
+            
+            self.do_login(phone)
+        
+        elif method == "wechat":
+            self.do_login("微信用户")
+    
+    def do_login(self, username):
+        """执行登录"""
+        self.is_logged_in = True
+        self.current_user = {"name": username, "type": self.login_method.get()}
+        
+        if self.current_user["type"] == "wechat":
+            self.user_avatar_btn.config(text="💬")
+        elif self.current_user["type"] == "phone":
+            self.user_avatar_btn.config(text="📱")
+        else:
+            self.user_avatar_btn.config(text=username[0] if username else "👤")
+        
+        self.login_dialog.destroy()
+        self.show_notification(f"登录成功，欢迎 {username}", is_weak=True)
+    
+    def show_user_info(self):
+        """显示用户信息弹窗"""
+        user_dialog = tk.Toplevel(self.root)
+        user_dialog.title("用户信息")
+        user_dialog.geometry("300x200")
+        user_dialog.resizable(False, False)
+        user_dialog.attributes('-topmost', True)
+        user_dialog.configure(bg="#252525")
+        
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - 300) // 2
+        y = (screen_height - 200) // 2
+        user_dialog.geometry(f"300x200+{x}+{y}")
+        
+        avatar_frame = tk.Frame(user_dialog, bg="#4CAF50", padx=50, pady=20)
+        avatar_frame.pack(fill=tk.X)
+        
+        avatar_label = tk.Label(avatar_frame, text=self.user_avatar_btn.cget("text"), 
+                               font=('Arial', 32))
+        avatar_label.pack()
+        
+        info_frame = tk.Frame(user_dialog, bg="#252525", padx=30, pady=20)
+        info_frame.pack(fill=tk.BOTH, expand=True)
+        
+        name_label = tk.Label(info_frame, text=f"用户名: {self.current_user['name']}", 
+                              bg="#252525", fg="#ffffff")
+        name_label.pack(anchor=tk.W, pady=(0, 10))
+        
+        type_label = tk.Label(info_frame, text=f"登录方式: {self.get_login_type_text()}", 
+                              bg="#252525", fg="#ffffff")
+        type_label.pack(anchor=tk.W, pady=(0, 20))
+        
+        logout_btn = tk.Button(info_frame, text="退出登录", command=lambda: self.do_logout(user_dialog),
+                               bg="#f44336", fg="#ffffff", font=('Arial', 11, 'bold'),
+                               relief='flat', padx=16, pady=8)
+        logout_btn.pack(fill=tk.X)
+    
+    def get_login_type_text(self):
+        """获取登录方式文本"""
+        type_map = {
+            "email": "邮箱",
+            "phone": "手机号",
+            "wechat": "微信"
+        }
+        return type_map.get(self.current_user.get("type"), "未知")
+    
+    def do_logout(self, dialog):
+        """执行退出登录"""
+        self.is_logged_in = False
+        self.current_user = None
+        self.user_avatar_btn.config(text="👤")
+        dialog.destroy()
+        self.show_notification("已退出登录", is_weak=True)
+    
+    def show_email_form(self):
+        for widget in self.form_frame.winfo_children():
+            widget.destroy()
+        
+        email_label = tk.Label(self.form_frame, text="邮箱", bg=self.card_bg, fg=self.text_color, font=('Arial', 11))
+        email_label.pack(anchor=tk.W, pady=(0, 5))
+        self.email_entry = tk.Entry(self.form_frame, bg=self.input_bg, fg=self.text_color, 
+                                   insertbackground='white', font=('Arial', 11), bd=1, relief='solid')
+        self.email_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        pwd_label = tk.Label(self.form_frame, text="密码", bg=self.card_bg, fg=self.text_color, font=('Arial', 11))
+        pwd_label.pack(anchor=tk.W, pady=(0, 5))
+        self.pwd_entry = tk.Entry(self.form_frame, bg=self.input_bg, fg=self.text_color, 
+                                  insertbackground='white', font=('Arial', 11), bd=1, relief='solid', show='*')
+        self.pwd_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        if self.login_mode.get() == "register":
+            confirm_pwd_label = tk.Label(self.form_frame, text="确认密码", bg=self.card_bg, fg=self.text_color, font=('Arial', 11))
+            confirm_pwd_label.pack(anchor=tk.W, pady=(0, 5))
+            self.confirm_pwd_entry = tk.Entry(self.form_frame, bg=self.input_bg, fg=self.text_color, 
+                                              insertbackground='white', font=('Arial', 11), bd=1, relief='solid', show='*')
+            self.confirm_pwd_entry.pack(fill=tk.X, pady=(0, 15))
+    
+    def show_phone_form(self):
+        for widget in self.form_frame.winfo_children():
+            widget.destroy()
+        
+        phone_label = tk.Label(self.form_frame, text="手机号", bg=self.card_bg, fg=self.text_color, font=('Arial', 11))
+        phone_label.pack(anchor=tk.W, pady=(0, 5))
+        self.phone_entry = tk.Entry(self.form_frame, bg=self.input_bg, fg=self.text_color, 
+                                    insertbackground='white', font=('Arial', 11), bd=1, relief='solid')
+        self.phone_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        code_frame = tk.Frame(self.form_frame, bg=self.card_bg)
+        code_frame.pack(fill=tk.X)
+        
+        code_label = tk.Label(code_frame, text="验证码", bg=self.card_bg, fg=self.text_color, font=('Arial', 11))
+        code_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        code_entry_frame = tk.Frame(code_frame, bg=self.card_bg)
+        code_entry_frame.pack(fill=tk.X)
+        
+        self.code_entry = tk.Entry(code_entry_frame, bg=self.input_bg, fg=self.text_color, 
+                                   insertbackground='white', font=('Arial', 11), bd=1, relief='solid', width=20)
+        self.code_entry.pack(side=tk.LEFT)
+        
+        self.send_code_btn = tk.Button(code_entry_frame, text="发送验证码", command=self.send_sms_code,
+                                       bg=self.light_bg, fg=self.text_color, font=('Arial', 10), 
+                                       relief='flat', padx=10, pady=5)
+        self.send_code_btn.pack(side=tk.RIGHT)
+        
+        if self.login_mode.get() == "register":
+            pwd_label = tk.Label(self.form_frame, text="设置密码", bg=self.card_bg, fg=self.text_color, font=('Arial', 11))
+            pwd_label.pack(anchor=tk.W, pady=(15, 5))
+            self.phone_pwd_entry = tk.Entry(self.form_frame, bg=self.input_bg, fg=self.text_color, 
+                                             insertbackground='white', font=('Arial', 11), bd=1, relief='solid', show='*')
+            self.phone_pwd_entry.pack(fill=tk.X)
+    
+    def show_wechat_form(self):
+        for widget in self.form_frame.winfo_children():
+            widget.destroy()
+        
+        qr_frame = tk.Frame(self.form_frame, bg=self.light_bg, padx=40, pady=20)
+        qr_frame.pack(fill=tk.X)
+        
+        qr_canvas = tk.Canvas(qr_frame, width=180, height=180, bg="#ffffff")
+        qr_canvas.pack(pady=10)
+        
+        # 绘制更清晰的二维码图案
+        qr_canvas.create_rectangle(0, 0, 180, 180, fill="#ffffff", outline="#ccc", width=2)
+        
+        # 绘制三个定位点（角落的正方形）
+        # 左上角
+        qr_canvas.create_rectangle(8, 8, 40, 40, fill="#000000")
+        qr_canvas.create_rectangle(14, 14, 34, 34, fill="#ffffff")
+        qr_canvas.create_rectangle(20, 20, 28, 28, fill="#000000")
+        
+        # 右上角
+        qr_canvas.create_rectangle(140, 8, 172, 40, fill="#000000")
+        qr_canvas.create_rectangle(146, 14, 166, 34, fill="#ffffff")
+        qr_canvas.create_rectangle(152, 20, 160, 28, fill="#000000")
+        
+        # 左下角
+        qr_canvas.create_rectangle(8, 140, 40, 172, fill="#000000")
+        qr_canvas.create_rectangle(14, 146, 34, 166, fill="#ffffff")
+        qr_canvas.create_rectangle(20, 152, 28, 160, fill="#000000")
+        
+        # 绘制随机点阵模拟二维码
+        for i in range(10):
+            for j in range(10):
+                if not (i < 4 and j < 4) and not (i < 4 and j > 5) and not (i > 5 and j < 4):
+                    if (i + j) % 2 == 0:
+                        x = 45 + i * 13
+                        y = 45 + j * 13
+                        qr_canvas.create_rectangle(x, y, x+11, y+11, fill="#000000")
+        
+        qr_label = tk.Label(qr_frame, text="微信扫码登录", bg=self.light_bg, fg=self.text_color, font=('Arial', 12))
+        qr_label.pack(pady=(10, 0))
+        
+        tip_label = tk.Label(self.form_frame, text="请打开微信扫一扫，扫描上方二维码", 
+                            bg=self.card_bg, fg=self.secondary_text, font=('Arial', 10))
+        tip_label.pack(pady=10)
+    
+    def switch_login_method(self):
+        method = self.login_method.get()
+        if method == "email":
+            self.show_email_form()
+        elif method == "phone":
+            self.show_phone_form()
+        elif method == "wechat":
+            self.show_wechat_form()
+    
+    def on_mode_change(self):
+        mode = self.login_mode.get()
+        if mode == "login":
+            self.submit_btn.config(text="登录")
+        else:
+            self.submit_btn.config(text="注册")
+        self.switch_login_method()
+    
+    def send_sms_code(self):
+        phone = self.phone_entry.get().strip()
+        if not phone:
+            self.show_notification("请输入手机号", is_weak=True)
+            return
+        
+        if len(phone) != 11:
+            self.show_notification("请输入正确的手机号", is_weak=True)
+            return
+        
+        self.send_code_btn.config(state=tk.DISABLED, text="发送中...")
+        self.login_dialog.after(1000, lambda: self.send_code_btn.config(state=tk.NORMAL, text="60秒后重发"))
+        self.show_notification("验证码已发送", is_weak=True)
+    
+    def handle_login(self):
+        method = self.login_method.get()
+        mode = self.login_mode.get()
+        
+        if method == "email":
+            email = self.email_entry.get().strip()
+            pwd = self.pwd_entry.get().strip()
+            
+            if not email or not pwd:
+                self.show_notification("请填写完整信息", is_weak=True)
+                return
+            
+            if not "@" in email:
+                self.show_notification("请输入正确的邮箱格式", is_weak=True)
+                return
+            
+            if mode == "register":
+                confirm_pwd = self.confirm_pwd_entry.get().strip()
+                if pwd != confirm_pwd:
+                    self.show_notification("两次输入的密码不一致", is_weak=True)
+                    return
+                self.show_notification("注册成功，请登录", is_weak=True)
+                self.login_mode.set("login")
+            else:
+                self.do_login(email)
+        
+        elif method == "phone":
+            phone = self.phone_entry.get().strip()
+            code = self.code_entry.get().strip()
+            
+            if not phone or not code:
+                self.show_notification("请填写完整信息", is_weak=True)
+                return
+            
+            if len(phone) != 11:
+                self.show_notification("请输入正确的手机号", is_weak=True)
+                return
+            
+            if len(code) != 6:
+                self.show_notification("请输入6位验证码", is_weak=True)
+                return
+            
+            if mode == "register":
+                pwd = self.phone_pwd_entry.get().strip()
+                if not pwd:
+                    self.show_notification("请设置密码", is_weak=True)
+                    return
+            
+            self.do_login(phone)
+        
+        elif method == "wechat":
+            self.do_login("微信用户")
+    
+    def do_login(self, username):
+        self.is_logged_in = True
+        self.current_user = {"name": username, "type": self.login_method.get()}
+        
+        if self.current_user["type"] == "wechat":
+            self.user_avatar_btn.config(text="💬")
+        elif self.current_user["type"] == "phone":
+            self.user_avatar_btn.config(text="📱")
+        else:
+            self.user_avatar_btn.config(text=username[0] if username else "👤")
+        
+        self.login_dialog.destroy()
+        self.show_notification(f"登录成功，欢迎 {username}", is_weak=True)
+    
+    def show_user_info(self):
+        user_dialog = tk.Toplevel(self.root)
+        user_dialog.title("用户信息")
+        user_dialog.geometry("300x200")
+        user_dialog.resizable(False, False)
+        user_dialog.attributes('-topmost', True)
+        user_dialog.configure(bg=self.card_bg)
+        
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - 300) // 2
+        y = (screen_height - 200) // 2
+        user_dialog.geometry(f"300x200+{x}+{y}")
+        
+        avatar_frame = tk.Frame(user_dialog, bg=self.accent_color, padx=50, pady=20)
+        avatar_frame.pack(fill=tk.X)
+        
+        avatar_label = tk.Label(avatar_frame, text=self.user_avatar_btn.cget("text"), 
+                               font=('Arial', 32))
+        avatar_label.pack()
+        
+        info_frame = tk.Frame(user_dialog, bg=self.card_bg, padx=30, pady=20)
+        info_frame.pack(fill=tk.BOTH, expand=True)
+        
+        name_label = tk.Label(info_frame, text=f"用户名: {self.current_user['name']}", 
+                              bg=self.card_bg, fg=self.text_color)
+        name_label.pack(anchor=tk.W, pady=(0, 10))
+        
+        type_label = tk.Label(info_frame, text=f"登录方式: {self.get_login_type_text()}", 
+                              bg=self.card_bg, fg=self.text_color)
+        type_label.pack(anchor=tk.W, pady=(0, 20))
+        
+        logout_btn = ttk.Button(info_frame, text="退出登录", command=lambda: self.do_logout(user_dialog),
+                               style='Danger.TButton')
+        logout_btn.pack(fill=tk.X)
+    
+    def get_login_type_text(self):
+        type_map = {
+            "email": "邮箱",
+            "phone": "手机号",
+            "wechat": "微信"
+        }
+        return type_map.get(self.current_user.get("type"), "未知")
+    
+    def do_logout(self, dialog):
+        self.is_logged_in = False
+        self.current_user = None
+        self.user_avatar_btn.config(text="👤")
+        dialog.destroy()
+        self.show_notification("已退出登录", is_weak=True)
+
     def show_notification(self, message, is_weak=False, parent=None):
         if is_weak:
             # 弱提示，自动消失
