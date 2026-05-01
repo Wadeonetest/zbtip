@@ -636,6 +636,16 @@ class ScreenRecorder:
                                          state=tk.DISABLED, style='Accent.TButton')
         self.finish_clip_btn.grid(row=0, column=5, padx=8, pady=4)
         
+        # 完成截取按钮的VIP角标（显示在按钮右上方）
+        self.finish_clip_badge = tk.Label(self.button_frame, text="VIP",
+                                        font=('Arial', 8, 'bold'),
+                                        bg="#FFD700", fg="#000000",
+                                        padx=2, pady=1, relief=tk.RAISED, 
+                                        borderwidth=1)
+        # 使用grid布局，将角标放在完成截取按钮的下方（row=1）
+        self.finish_clip_badge.grid(row=1, column=5, padx=8, pady=(0, 2))
+        self.finish_clip_badge.lift()  # 确保在最前面
+        
         # 录制记录按钮
         self.record_history_btn = ttk.Button(self.button_frame, text="录制记录", command=self.show_record_history, 
                                            style='Custom.TButton')
@@ -841,6 +851,23 @@ class ScreenRecorder:
                 else:
                     remaining = self.db.get_remaining_marks(self.current_user['id'])
                     self.mini_mark_badge.config(text=f"【试用：{remaining}】", bg="#FF0000", fg="#ffffff")
+        
+        # 更新完成截取按钮的VIP角标
+        self.update_finish_clip_badge()
+    
+    def update_finish_clip_badge(self):
+        """更新完成截取按钮的VIP角标"""
+        if hasattr(self, 'finish_clip_badge') and hasattr(self, 'finish_clip_btn'):
+            btn_state = str(self.finish_clip_btn.cget('state'))  # 转换为字符串
+            
+            if btn_state == 'normal':
+                # 按钮可点击时显示VIP角标
+                self.finish_clip_badge.config(text="VIP", bg="#FFD700", fg="#000000")
+                self.finish_clip_badge.grid(row=1, column=5, padx=8, pady=(0, 2))
+                self.finish_clip_badge.lift()
+            else:
+                # 按钮置灰时隐藏角标
+                self.finish_clip_badge.grid_forget()
 
     def update_vip_status_display(self):
         """更新VIP状态显示"""
@@ -2581,6 +2608,7 @@ class ScreenRecorder:
             # 切换按钮为取消截取
             self.clip_btn.config(text="取消截取", command=self.cancel_clip, state=tk.NORMAL)
             self.finish_clip_btn.config(state=tk.NORMAL)
+            self.update_finish_clip_badge()
             self.update_progress_bar()
 
     def cancel_clip(self):
@@ -2589,10 +2617,25 @@ class ScreenRecorder:
         # 恢复按钮为截取视频
         self.clip_btn.config(text="截取视频", command=self.start_clip, state=tk.NORMAL)
         self.finish_clip_btn.config(state=tk.DISABLED)
+        self.update_finish_clip_badge()  # 更新VIP角标
         self.update_progress_bar()
     
     def finish_clip(self):
+        """完成截取视频"""
         if self.clip_mode:
+            # 检查用户是否在会员生效期内
+            if not self.is_logged_in:
+                self.show_notification("请先登录账号", is_weak=True)
+                self.show_login_dialog()
+                return
+            
+            vip_status = self.db.get_user_vip_status(self.current_user['id'])
+            if not vip_status['is_vip']:
+                # 未在会员生效期内，跳转到会员tab
+                self.show_notification("截取视频需要开通会员", is_weak=True)
+                self.switch_tab('vip')
+                return
+            
             if self.clip_start < self.clip_end:
                 clip = {
                     "id": len(self.clips) + 1,
@@ -3986,6 +4029,7 @@ class ScreenRecorder:
         
         self.show_login_tip(f"登录成功，欢迎 {self.current_user['name']}", is_success=True)
         self.update_mark_badge()
+        self.update_finish_clip_badge()
         self.login_dialog.after(1500, lambda: self.login_dialog.destroy())
     
     def show_user_info(self):
