@@ -1621,18 +1621,24 @@ class ScreenRecorder:
                 clip_index = selected_index[0]
                 if clip_index < len(self.clips):
                     clip = self.clips[clip_index]
-                    clip_id = clip.get('id', clip_index + 1)
-                    # 检查片段是否有自定义名称
-                    if 'name' in clip and clip['name']:
-                        clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+                    # 检查片段是否有文件夹名称（新结构）
+                    if 'folder_name' in clip:
+                        # 新结构：片段在单独的文件夹中
+                        clip_folder = os.path.join(clip_dir, clip['folder_name'])
+                        clip_file = os.path.join(clip_folder, "clip.avi")
                     else:
-                        # 获取当前视频的文件名（不含路径和后缀）
-                        video_filename = ""
-                        if self.video_file:
-                            basename = os.path.basename(self.video_file)
-                            video_filename = os.path.splitext(basename)[0] + "_"
-                        # 使用与显示名称一致的格式
-                        clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
+                        # 旧结构：直接在截取视频文件夹中
+                        clip_id = clip.get('id', clip_index + 1)
+                        if 'name' in clip and clip['name']:
+                            clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
+                        else:
+                            # 获取当前视频的文件名（不含路径和后缀）
+                            video_filename = ""
+                            if self.video_file:
+                                basename = os.path.basename(self.video_file)
+                                video_filename = os.path.splitext(basename)[0] + "_"
+                            # 使用与显示名称一致的格式
+                            clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
                     
                     # 打开目录并选中文件
                     if os.path.exists(clip_file):
@@ -1743,46 +1749,94 @@ class ScreenRecorder:
             
             # 检查新名称是否已存在
             clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
-            new_file = os.path.join(clip_dir, f"{new_name}.avi")
             
-            # 检查是否与其他文件重名
+            # 检查是否与其他文件重名（包括文件夹）
             duplicate_found = False
             if os.path.exists(clip_dir):
-                for file in os.listdir(clip_dir):
-                    if file.endswith('.avi') and file == f"{new_name}.avi":
+                for item in os.listdir(clip_dir):
+                    if item == new_name:
                         duplicate_found = True
                         break
             
             if duplicate_found:
-                self.show_notification("已存在重名文件", is_weak=True, parent=rename_window)
+                self.show_notification("已存在重名文件或文件夹", is_weak=True, parent=rename_window)
                 return
             
-            # 获取原文件路径
-            if 'name' in clip and clip['name']:
-                old_file = os.path.join(clip_dir, f"{clip['name']}.avi")
-            else:
-                # 获取当前视频的文件名（不含路径和后缀）
-                video_filename = ""
-                if self.video_file:
-                    basename = os.path.basename(self.video_file)
-                    video_filename = os.path.splitext(basename)[0] + "_"
-                # 使用与显示名称一致的格式
-                old_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
-            
             try:
-                # 重命名文件
-                if os.path.exists(old_file):
-                    os.rename(old_file, new_file)
-                    print(f"片段文件已重命名: {old_file} -> {new_file}")
+                # 获取片段在self.clips中的实际索引
+                actual_clip_index = None
+                for idx, c in enumerate(self.clips):
+                    if c.get('id') == clip_id:
+                        actual_clip_index = idx
+                        break
                 
-                # 更新片段信息
-                clip['name'] = new_name
+                print(f"[DEBUG] 重命名片段: clip_id={clip_id}, actual_index={actual_clip_index}")
+                print(f"[DEBUG] 当前片段信息: {self.clips[actual_clip_index] if actual_clip_index is not None else 'Not found'}")
+                
+                # 检查是否有folder_name（新结构）或者尝试构建folder_name
+                current_clip = self.clips[actual_clip_index]
+                has_folder_name = 'folder_name' in current_clip and current_clip['folder_name']
+                
+                if has_folder_name:
+                    # 新结构：重命名文件夹
+                    old_folder = os.path.join(clip_dir, current_clip['folder_name'])
+                    new_folder = os.path.join(clip_dir, new_name)
+                    
+                    if os.path.exists(old_folder):
+                        os.rename(old_folder, new_folder)
+                        print(f"片段文件夹已重命名: {old_folder} -> {new_folder}")
+                    else:
+                        print(f"警告：原文件夹不存在: {old_folder}")
+                    
+                    # 更新片段信息（更新到self.clips）
+                    self.clips[actual_clip_index]['folder_name'] = new_name
+                    self.clips[actual_clip_index]['name'] = new_name
+                    print(f"[DEBUG] 更新self.clips[{actual_clip_index}]完成")
+                    
+                    # 更新签名文件
+                    self.create_clip_signature(new_folder, self.clips[actual_clip_index])
+                else:
+                    # 旧结构或混合结构：需要处理文件夹
+                    video_filename = ""
+                    if self.video_file:
+                        basename = os.path.basename(self.video_file)
+                        video_filename = os.path.splitext(basename)[0] + "_"
+                    
+                    # 尝试构建文件夹名（与finish_clip中一致的格式）
+                    old_folder_name = f"{video_filename}片段_{clip_id}"
+                    old_folder = os.path.join(clip_dir, old_folder_name)
+                    new_folder = os.path.join(clip_dir, new_name)
+                    
+                    print(f"[DEBUG] 尝试旧结构重命名: {old_folder} -> {new_folder}")
+                    
+                    if os.path.exists(old_folder):
+                        os.rename(old_folder, new_folder)
+                        print(f"片段文件夹已重命名（旧结构）: {old_folder} -> {new_folder}")
+                        # 更新片段信息
+                        self.clips[actual_clip_index]['folder_name'] = new_name
+                        self.clips[actual_clip_index]['name'] = new_name
+                        # 更新签名文件
+                        self.create_clip_signature(new_folder, self.clips[actual_clip_index])
+                    else:
+                        # 旧结构文件方式（无文件夹）
+                        new_file = os.path.join(clip_dir, f"{new_name}.avi")
+                        old_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
+                        
+                        if os.path.exists(old_file):
+                            os.rename(old_file, new_file)
+                            print(f"片段文件已重命名（旧结构）: {old_file} -> {new_file}")
+                        
+                        # 更新片段信息
+                        self.clips[actual_clip_index]['name'] = new_name
                 
                 # 更新视频片段字典
                 if self.video_file in self.video_clips:
                     for c in self.video_clips[self.video_file]:
                         if c['id'] == clip_id:
                             c['name'] = new_name
+                            if 'folder_name' in self.clips[actual_clip_index]:
+                                c['folder_name'] = new_name
+                            print(f"[DEBUG] 更新video_clips完成: {c}")
                             break
                 
                 # 更新片段列表
@@ -1794,6 +1848,8 @@ class ScreenRecorder:
                 self.show_notification("片段重命名成功", is_weak=True)
             except Exception as e:
                 print(f"重命名失败: {e}")
+                import traceback
+                traceback.print_exc()
                 messagebox.showerror("错误", f"重命名失败：{str(e)}")
         
         # 取消按钮
@@ -1942,42 +1998,27 @@ class ScreenRecorder:
             if self.current_session_dir:
                 clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
                 if os.path.exists(clip_dir):
-                    # 查找截取视频文件
-                    clip_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
-                    print(f"找到 {len(clip_files)} 个截取视频文件")
-                    # 按文件名排序
-                    clip_files.sort()
-                    # 为每个截取视频创建片段信息
-                    for i, clip_file in enumerate(clip_files, 1):
-                        print(f"处理截取视频文件: {clip_file}")
-                        # 尝试从文件名提取片段ID
-                        clip_id = i
-                        # 尝试从文件名中提取ID
-                        if clip_file.endswith('.avi'):
-                            try:
-                                # 检查是否是新格式：{video_filename}_片段 {id}.avi
-                                if '片段' in clip_file:
-                                    # 提取数字部分
-                                    id_part = clip_file.split('片段 ')[1].split('.')[0]
-                                    clip_id = int(id_part)
-                                    print(f"从新格式文件名提取的ID: {clip_id}")
-                                elif clip_file.startswith('clip_'):
-                                    # 兼容旧格式
-                                    id_part = clip_file.split('_')[1].split('.')[0]
-                                    clip_id = int(id_part)
-                                    print(f"从旧格式文件名提取的ID: {clip_id}")
-                            except:
-                                pass
-                        # 由于我们没有存储片段的时间信息，暂时使用默认值
-                        # 实际应用中，可能需要从文件名或其他方式获取时间信息
-                        clip = {
-                            "id": clip_id,
-                            "start": 0,  # 临时值
-                            "end": 0,    # 临时值
-                            "duration": 0  # 临时值
-                        }
-                        self.clips.append(clip)
-                        print(f"添加片段: ID={clip_id}")
+                    # 查找子目录（每个片段一个文件夹）
+                    for item in os.listdir(clip_dir):
+                        item_path = os.path.join(clip_dir, item)
+                        if os.path.isdir(item_path):
+                            # 验证这个文件夹是否是有效的片段文件夹
+                            is_valid, error_msg, clip_info = self.is_valid_clip_folder(item_path)
+                            if is_valid:
+                                print(f"找到有效片段文件夹: {item}")
+                                # 从签名文件中获取片段信息，或者构建默认信息
+                                clip = clip_info if clip_info else {
+                                    "id": len(self.clips) + 1,
+                                    "start": 0,
+                                    "end": 0,
+                                    "duration": 0
+                                }
+                                # 记录文件夹名称，用于后续操作
+                                clip["folder_name"] = item
+                                self.clips.append(clip)
+                                print(f"添加片段: ID={clip.get('id', len(self.clips))}")
+                            else:
+                                print(f"跳过无效片段文件夹 {item}: {error_msg}")
             print(f"总共添加 {len(self.clips)} 个片段")
             # 保存到video_clips字典
             self.video_clips[self.video_file] = self.clips.copy()
@@ -2150,6 +2191,61 @@ class ScreenRecorder:
             return False, "标记文件格式错误"
         
         return True, ""
+    
+    def create_clip_signature(self, clip_folder_path, clip_info):
+        """
+        为截取的片段创建工具签名验证文件
+        
+        参数:
+            clip_folder_path: 片段文件夹路径
+            clip_info: 片段信息字典
+        """
+        try:
+            # 构建签名数据
+            signature_data = {
+                "tool_signature": "live_recorder_marker_tool_v1",
+                "clip_info": clip_info,
+                "create_time": time.strftime('%Y%m%d_%H%M%S')
+            }
+            
+            # 保存为 JSON 文件
+            signature_file = os.path.join(clip_folder_path, "clip_info.json")
+            with open(signature_file, 'w', encoding='utf-8') as f:
+                json.dump(signature_data, f, ensure_ascii=False, indent=2)
+            
+            print(f"片段签名文件已创建: {signature_file}")
+            return True
+        except Exception as e:
+            print(f"创建片段签名失败: {e}")
+            return False
+    
+    def is_valid_clip_folder(self, clip_folder_path):
+        """
+        验证片段文件夹是否为此工具产生的
+        
+        参数:
+            clip_folder_path: 片段文件夹路径
+        
+        返回: (is_valid, error_message, clip_info)
+        """
+        # 检查是否存在 clip_info.json 文件
+        signature_file = os.path.join(clip_folder_path, "clip_info.json")
+        if not os.path.exists(signature_file):
+            return False, "未找到片段签名文件", None
+        
+        # 检查工具签名
+        try:
+            with open(signature_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            if isinstance(data, dict) and data.get("tool_signature") != "live_recorder_marker_tool_v1":
+                return False, "无效的片段工具签名", None
+            
+            clip_info = data.get("clip_info", {})
+            return True, "", clip_info
+        except Exception as e:
+            print(f"验证片段签名失败: {e}")
+            return False, "片段签名文件格式错误", None
     
     def calculate_video_duration(self):
         if self.video_file:
@@ -2509,10 +2605,10 @@ class ScreenRecorder:
                 # 保存剪辑到"截取视频"文件夹
                 if self.video_file:
                     try:
-                        # 构建剪辑保存路径
+                        # 构建剪辑保存路径 - 为每个片段创建单独文件夹
                         # 检查片段是否有自定义名称
                         if 'name' in clip and clip['name']:
-                            clip_filename = f"{clip['name']}.avi"
+                            clip_folder_name = clip['name']
                         else:
                             # 获取当前视频的文件名（不含路径和后缀）
                             video_filename = ""
@@ -2520,8 +2616,15 @@ class ScreenRecorder:
                                 basename = os.path.basename(self.video_file)
                                 video_filename = os.path.splitext(basename)[0] + "_"
                             # 使用与显示名称一致的格式
-                            clip_filename = f"{video_filename}片段 {clip['id']}.avi"
-                        clip_path = os.path.join(os.path.dirname(self.video_file), self.clip_dir, clip_filename)
+                            clip_folder_name = f"{video_filename}片段_{clip['id']}"
+                        
+                        # 创建片段文件夹
+                        clip_folder = os.path.join(os.path.dirname(self.video_file), self.clip_dir, clip_folder_name)
+                        if not os.path.exists(clip_folder):
+                            os.makedirs(clip_folder)
+                        
+                        # 片段视频文件路径
+                        clip_path = os.path.join(clip_folder, "clip.avi")
                         
                         # 获取视频信息并使用FFmpeg快速裁剪
                         cap = cv2.VideoCapture(self.video_file)
@@ -2535,59 +2638,77 @@ class ScreenRecorder:
                             start_time = clip["start"]
                             duration = clip["end"] - clip["start"]
                             
+                            clip_saved = False
                             # 使用FFmpeg快速裁剪（速度比cv2逐帧处理快10-50倍）
                             if IMAGEIO_FFMPEG_AVAILABLE:
                                 try:
                                     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-                                    
-                                    # Windows路径处理：转换为正斜杠
-                                    input_path = self.video_file.replace('\\', '/').replace(':', '\\\\:')
-                                    output_path = clip_path.replace('\\', '/').replace(':', '\\\\:')
                                     
                                     # FFmpeg命令：-ss指定开始时间，-t指定持续时间，-c copy表示直接复制流不重新编码
                                     cmd = [
                                         ffmpeg_exe,
                                         '-y',  # 覆盖输出文件
                                         '-ss', str(start_time),
-                                        '-i', input_path,
+                                        '-i', self.video_file,
                                         '-t', str(duration),
                                         '-c', 'copy',  # 直接复制，不重新编码，速度最快
                                         '-avoid_negative_ts', 'make_zero',
-                                        output_path
+                                        clip_path
                                     ]
                                     
                                     result = subprocess.run(cmd, capture_output=True, text=True)
                                     if result.returncode != 0:
+                                        print(f"FFmpeg copy模式失败，错误信息: {result.stderr}")
                                         # 如果copy模式失败，尝试重新编码模式
                                         cmd_reencode = [
                                             ffmpeg_exe,
                                             '-y',
                                             '-ss', str(start_time),
-                                            '-i', input_path,
+                                            '-i', self.video_file,
                                             '-t', str(duration),
                                             '-c:v', 'libx264',  # 使用H.264编码
                                             '-preset', 'ultrafast',  # 最快预设
                                             '-c:a', 'aac',
-                                            output_path
+                                            clip_path
                                         ]
                                         result = subprocess.run(cmd_reencode, capture_output=True, text=True)
+                                        if result.returncode != 0:
+                                            print(f"FFmpeg reencode模式也失败: {result.stderr}")
                                     
-                                    print(f"剪辑已保存到: {clip_path}")
+                                    if result.returncode == 0:
+                                        print(f"剪辑已保存到: {clip_path}")
+                                        clip_saved = True
+                                    else:
+                                        print("FFmpeg处理失败，尝试使用cv2方式")
+                                        self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                                        if os.path.exists(clip_path):
+                                            clip_saved = True
                                 except Exception as ffmpeg_err:
                                     print(f"FFmpeg裁剪失败，回退到cv2方式: {ffmpeg_err}")
                                     self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                                    if os.path.exists(clip_path):
+                                        clip_saved = True
                             else:
                                 # 没有FFmpeg，使用cv2方式
                                 self.extract_clip_with_cv2(clip, clip_path, fps, width, height)
+                                if os.path.exists(clip_path):
+                                    clip_saved = True
                             
-                            # 保存片段信息到video_clips字典
-                            if self.video_file not in self.video_clips:
-                                self.video_clips[self.video_file] = []
-                            existing_clip = next((c for c in self.video_clips[self.video_file] if c['id'] == clip['id']), None)
-                            if existing_clip:
-                                existing_clip.update(clip)
+                            # 只有在视频片段成功保存后才创建签名文件
+                            if clip_saved:
+                                # 保存片段信息到video_clips字典
+                                if self.video_file not in self.video_clips:
+                                    self.video_clips[self.video_file] = []
+                                existing_clip = next((c for c in self.video_clips[self.video_file] if c['id'] == clip['id']), None)
+                                if existing_clip:
+                                    existing_clip.update(clip)
+                                else:
+                                    self.video_clips[self.video_file].append(clip.copy())
+                                
+                                # 创建片段工具签名文件
+                                self.create_clip_signature(clip_folder, clip)
                             else:
-                                self.video_clips[self.video_file].append(clip.copy())
+                                print("警告：视频片段保存失败，未创建签名文件")
                         else:
                             print("无法打开原始视频文件")
                     except Exception as e:
