@@ -86,7 +86,31 @@ class DatabaseManager:
                 INSERT INTO config (name, value, description)
                 VALUES (?, ?, ?)
             ''', ('default_remaining_marks', '2', '非会员默认剩余标记次数'))
-
+        
+        # 客服邮箱配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'customer_service_email'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('customer_service_email', 'support@zhibo.com', '客服邮箱'))
+        
+        # 工作时间配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'work_time'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('work_time', '周一至周五 9:00-18:00', '工作时间'))
+        
+        # 会员页面title文案配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'vip_page_title'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('vip_page_title', '购买会员解锁标记进度无限次使用\n购买会员解锁截取视频无限次使用', '会员页面title文案'))
+        
         # 检查并添加 remaining_marks 列（数据库迁移）
         cursor.execute("PRAGMA table_info(users)")
         columns = [column[1] for column in cursor.fetchall()]
@@ -586,9 +610,21 @@ class ScreenRecorder:
         
         self.mark_btn = ttk.Button(self.button_frame, text="标记进度[空格]", command=self.mark_progress, 
                                   style='Accent.TButton', takefocus=False)
-        # 初始状态隐藏
+        self.mark_btn.grid(row=0, column=2, padx=6, pady=2)
         
-        # 添加分隔符
+        # 标记按钮角标（显示VIP或剩余次数）- 放在按钮下方，确保能看到
+        self.mark_badge_label = tk.Label(self.button_frame, text="【试用：2】",
+                                        font=('Arial', 12, 'bold'),
+                                        bg="#FF0000", fg="#ffffff",
+                                        padx=10, pady=5, relief=tk.RAISED, 
+                                        borderwidth=2)
+        self.mark_badge_label.grid(row=1, column=2, padx=6, pady=2)
+        self.mark_badge_label.lift()  # 确保在最前面
+        
+        # 更新角标内容
+        self.update_mark_badge()
+        
+        # 添加分隔符（column=3）
         separator = ttk.Separator(self.button_frame, orient=tk.VERTICAL)
         separator.grid(row=0, column=3, padx=12, pady=4, sticky='ns')
         
@@ -695,7 +731,23 @@ class ScreenRecorder:
         title = tk.Label(page, text="💎 会员中心",
                         font=('Arial', 18, 'bold'),
                         bg=self.bg_color, fg=self.accent_color)
-        title.pack(anchor=tk.W, pady=(20, 10), padx=20)
+        title.pack(anchor=tk.W, pady=(20, 5), padx=20)
+        
+        # 会员页面title文案（艺术字样式）
+        vip_title_frame = tk.Frame(page, bg=self.bg_color)
+        vip_title_frame.pack(anchor=tk.W, pady=(0, 20), padx=20)
+        
+        line1_frame = tk.Frame(vip_title_frame, bg=self.bg_color)
+        line1_frame.pack(anchor=tk.W)
+        tk.Label(line1_frame, text="购买会员解锁", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(line1_frame, text="标记进度", font=('STKaiti', 14, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
+        tk.Label(line1_frame, text="功能无限次使用", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        
+        line2_frame = tk.Frame(vip_title_frame, bg=self.bg_color)
+        line2_frame.pack(anchor=tk.W)
+        tk.Label(line2_frame, text="购买会员解锁", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(line2_frame, text="截取视频", font=('STKaiti', 14, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
+        tk.Label(line2_frame, text="功能无限次使用", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
         
         # 用户VIP状态卡片
         self.vip_status_card = tk.Frame(page, bg=self.card_bg, padx=20, pady=15)
@@ -756,13 +808,48 @@ class ScreenRecorder:
         # 更新VIP状态显示
         self.update_vip_status_display()
 
+    def show_mark_badge(self):
+        """显示标记按钮角标"""
+        if hasattr(self, 'mark_badge_label') and self.mark_btn.winfo_exists():
+            # 显示角标在按钮右侧
+            self.mark_badge_label.grid(row=0, column=25, padx=2, pady=2)
+            self.mark_badge_label.lift()  # 确保在最前面
+            self.update_mark_badge()  # 更新角标内容
+
+    def update_mark_badge(self):
+        """更新标记按钮角标（主窗口和缩略窗口）"""
+        # 更新主窗口角标
+        if hasattr(self, 'mark_badge_label'):
+            if not self.is_logged_in:
+                self.mark_badge_label.config(text="【试用：2】", bg="#FF0000", fg="#ffffff")
+            else:
+                vip_status = self.db.get_user_vip_status(self.current_user['id'])
+                if vip_status['is_vip']:
+                    self.mark_badge_label.config(text="【VIP】", bg="#4CAF50", fg="#ffffff")
+                else:
+                    remaining = self.db.get_remaining_marks(self.current_user['id'])
+                    self.mark_badge_label.config(text=f"【试用：{remaining}】", bg="#FF0000", fg="#ffffff")
+        
+        # 更新缩略窗口角标（确保窗口存在）
+        if hasattr(self, 'mini_mark_badge') and hasattr(self, 'mini_window') and self.mini_window and self.mini_mark_badge.winfo_exists():
+            if not self.is_logged_in:
+                self.mini_mark_badge.config(text="【试用：2】", bg="#FF0000", fg="#ffffff")
+            else:
+                vip_status = self.db.get_user_vip_status(self.current_user['id'])
+                if vip_status['is_vip']:
+                    self.mini_mark_badge.config(text="【VIP】", bg="#4CAF50", fg="#ffffff")
+                else:
+                    remaining = self.db.get_remaining_marks(self.current_user['id'])
+                    self.mini_mark_badge.config(text=f"【试用：{remaining}】", bg="#FF0000", fg="#ffffff")
+
     def update_vip_status_display(self):
         """更新VIP状态显示"""
         if not hasattr(self, 'vip_status_label'):
             return
             
         if not self.is_logged_in:
-            self.vip_status_label.config(text="未登录", fg=self.secondary_text)
+            # 删除未登录文案，保持空白或隐藏
+            self.vip_status_label.config(text="", fg=self.secondary_text)
             self.vip_days_label.config(text="")
         else:
             vip_status = self.db.get_user_vip_status(self.current_user['id'])
@@ -794,6 +881,7 @@ class ScreenRecorder:
         if purchase_id:
             self.show_notification(f"{product['name']}购买成功！", is_weak=True)
             self.update_vip_status_display()
+            self.update_mark_badge()
         else:
             self.show_notification("购买失败，请重试", is_weak=True)
 
@@ -854,19 +942,8 @@ class ScreenRecorder:
         info_card = tk.Frame(page, bg=self.card_bg, padx=30, pady=30)
         info_card.pack(fill=tk.BOTH, expand=True, padx=20)
         
-        # 客服微信
-        wechat_frame = tk.Frame(info_card, bg=self.card_bg)
-        wechat_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        tk.Label(wechat_frame, text="客服微信：",
-                font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
-        
-        tk.Label(wechat_frame, text="zhibo_helper",
-                font=('Arial', 12, 'bold'),
-                bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
-        
-        # 客服邮箱
+        # 客服邮箱（从配置表读取）
+        email_value = self.db.get_config('customer_service_email') or '暂未设置'
         email_frame = tk.Frame(info_card, bg=self.card_bg)
         email_frame.pack(fill=tk.X, pady=(0, 20))
         
@@ -874,11 +951,13 @@ class ScreenRecorder:
                 font=('Arial', 12),
                 bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
         
-        tk.Label(email_frame, text="support@zhibo.com",
+        self.service_email_label = tk.Label(email_frame, text=email_value,
                 font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+                bg=self.card_bg, fg=self.text_color)
+        self.service_email_label.pack(side=tk.LEFT)
         
-        # 工作时间
+        # 工作时间（从配置表读取）
+        time_value = self.db.get_config('work_time') or '暂未设置'
         time_frame = tk.Frame(info_card, bg=self.card_bg)
         time_frame.pack(fill=tk.X)
         
@@ -886,9 +965,10 @@ class ScreenRecorder:
                 font=('Arial', 12),
                 bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
         
-        tk.Label(time_frame, text="周一至周五 9:00-18:00",
+        self.service_time_label = tk.Label(time_frame, text=time_value,
                 font=('Arial', 12),
-                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+                bg=self.card_bg, fg=self.text_color)
+        self.service_time_label.pack(side=tk.LEFT)
         
         # 提示
         tip_label = tk.Label(page, text="* 遇到问题可通过以上方式联系我们",
@@ -1325,11 +1405,19 @@ class ScreenRecorder:
         
         self.recording = True
         self.paused = False
+        
+        # 最小化主窗口
+        self.root.iconify()
+        
         # 录制时：显示暂停、结束、标记按钮，隐藏开始按钮
         self.start_btn.grid_remove()
         self.pause_btn.grid(row=0, column=0, padx=6, pady=2)
         self.stop_btn.grid(row=0, column=1, padx=6, pady=2)
         self.mark_btn.grid(row=0, column=2, padx=6, pady=2)
+        # 显示角标在按钮下方（row=1, column=2）
+        self.mark_badge_label.grid(row=1, column=2, padx=6, pady=2)
+        self.mark_badge_label.lift()  # 确保在最前面
+        self.update_mark_badge()  # 更新角标内容
         self.clip_btn.config(state=tk.DISABLED)
         
         # 取消截取视频状态
@@ -1446,6 +1534,7 @@ class ScreenRecorder:
         self.pause_btn.grid_remove()
         self.stop_btn.grid_remove()
         self.mark_btn.grid_remove()
+        self.mark_badge_label.grid_remove()
         self.start_btn.grid(row=0, column=0, padx=6, pady=2)
         self.clip_btn.config(state=tk.NORMAL)
         self.stop_update = True
@@ -2333,11 +2422,6 @@ class ScreenRecorder:
             self.show_notification("请先登录账号", is_weak=True)
             return
         
-        remaining = self.db.get_remaining_marks(self.current_user['id'])
-        if remaining <= 0:
-            self.show_notification("剩余标记次数不足，请购买会员", is_weak=True)
-            return
-        
         # 如果正在录屏且处于暂停状态，不允许标记进度
         if self.recording and self.paused:
             # 先关闭可能存在的鼠标移入提示
@@ -2351,6 +2435,15 @@ class ScreenRecorder:
                 self.show_notification("暂停状态下无法标记进度", is_weak=True, parent=self.mini_window)
             else:
                 self.show_notification("暂停状态下无法标记进度", is_weak=True)
+            return
+        
+        remaining = self.db.get_remaining_marks(self.current_user['id'])
+        if remaining <= 0:
+            self.show_notification("剩余标记次数不足，请购买会员", is_weak=True)
+            # 显示主窗口并切换到会员tab
+            self.root.deiconify()
+            self.root.lift()
+            self.switch_tab('vip')
             return
         
         # 如果没有在录屏且没有打开视频文件，提示用户
@@ -2381,6 +2474,8 @@ class ScreenRecorder:
                 self.show_notification(f"已完成标记（剩余{new_remaining}次）", is_weak=True)
             # 保存标记到文件
             self.save_markers_to_file()
+            # 更新角标
+            self.update_mark_badge()
     
     def start_clip(self):
         if self.video_file and self.video_duration > 0:
@@ -3769,6 +3864,7 @@ class ScreenRecorder:
             self.user_avatar_btn.config(text=name[0] if name else "👤")
         
         self.show_login_tip(f"登录成功，欢迎 {self.current_user['name']}", is_success=True)
+        self.update_mark_badge()
         self.login_dialog.after(1500, lambda: self.login_dialog.destroy())
     
     def show_user_info(self):
@@ -3857,6 +3953,7 @@ class ScreenRecorder:
         self.user_avatar_btn.config(text="👤")
         dialog.destroy()
         self.show_notification("已退出登录", is_weak=True)
+        self.update_mark_badge()
     
     def show_forgot_password_dialog(self):
         """显示忘记密码弹窗（仅支持手机号）"""
@@ -4766,6 +4863,14 @@ class ScreenRecorder:
         self.mini_mark_btn.configure(style='Accent.TButton')
         self.mini_mark_btn.pack(side=tk.LEFT)
         
+        # 缩略窗口标记按钮角标 - 放在按钮右侧
+        self.mini_mark_badge = tk.Label(mark_btn_frame, text="试用：2",
+                                        font=('Arial', 9, 'bold'),
+                                        bg="#FF0000", fg="#ffffff",
+                                        padx=6, pady=2, relief=tk.RAISED, 
+                                        borderwidth=2)
+        self.mini_mark_badge.pack(side=tk.LEFT, padx=2)
+        
         # 添加提示图形（圆形+？）
         help_canvas = tk.Canvas(mark_btn_frame, width=20, height=20, bg="#1a1a1a", highlightthickness=0)
         help_canvas.pack(side=tk.LEFT, padx=5)
@@ -4855,6 +4960,9 @@ class ScreenRecorder:
         # 确保窗口显示在最前面
         self.mini_window.update_idletasks()  # 强制更新窗口任务
         self.mini_window.update()  # 强制更新窗口
+        
+        # 更新角标内容（必须在窗口创建完成后调用）
+        self.update_mark_badge()
         self.mini_window.lift()
         self.mini_window.focus_force()
         self.mini_window.deiconify()
