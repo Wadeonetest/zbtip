@@ -29,7 +29,8 @@ class DatabaseManager:
     def init_database(self):
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
+        # 创建 users 表（如果不存在）
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,12 +44,14 @@ class DatabaseManager:
                 is_vip BOOLEAN DEFAULT 0,
                 vip_expire_at DATETIME,
                 last_login_at DATETIME,
+                remaining_marks INTEGER DEFAULT 0,
                 status INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
+
+        # 创建 vip_purchases 表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS vip_purchases (
                 id TEXT PRIMARY KEY,
@@ -65,7 +68,37 @@ class DatabaseManager:
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         ''')
-        
+
+        # 创建 config 表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS config (
+                id INTEGER PRIMARY KEY,
+                name TEXT UNIQUE,
+                value TEXT,
+                description TEXT
+            )
+        ''')
+
+        # 初始化配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'default_remaining_marks'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('default_remaining_marks', '2', '非会员默认剩余标记次数'))
+
+        # 检查并添加 remaining_marks 列（数据库迁移）
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'remaining_marks' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN remaining_marks INTEGER DEFAULT 0")
+            # 为已存在的用户设置默认值
+            default_marks = 2
+            cursor.execute("UPDATE users SET remaining_marks = ? WHERE is_vip = 0", (default_marks,))
+            # VIP用户设置很大的值
+            vip_marks = 99999999999999999999999999999999999999
+            cursor.execute("UPDATE users SET remaining_marks = ? WHERE is_vip = 1", (vip_marks,))
+
         conn.commit()
         conn.close()
 
@@ -82,10 +115,11 @@ class DatabaseManager:
         try:
             password_hash = self.hash_password(password)
             now = self.get_beijing_time()
+            default_marks = int(self.get_config('default_remaining_marks') or '2')
             cursor.execute('''
-                INSERT INTO users (email, phone, password_hash, nickname, login_type, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (email, phone, password_hash, nickname, login_type, now, now))
+                INSERT INTO users (email, phone, password_hash, nickname, login_type, remaining_marks, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (email, phone, password_hash, nickname, login_type, default_marks, now, now))
             user_id = cursor.lastrowid
             conn.commit()
             return user_id
@@ -153,6 +187,14 @@ class DatabaseManager:
         ''', (purchase_id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, start_at))
 
         self._update_user_vip_status(cursor, user_id)
+        
+        vip_marks = 99999999999999999999999999999999999999
+        now = self.get_beijing_time()
+        cursor.execute('''
+            UPDATE users
+            SET remaining_marks = ?, updated_at = ?
+            WHERE id = ?
+        ''', (vip_marks, now, user_id))
 
         conn.commit()
         conn.close()
@@ -173,12 +215,14 @@ class DatabaseManager:
             WHERE user_id = ? AND status = 1
         ''', (user_id,))
         latest_expire = cursor.fetchone()['latest_expire']
+        
+        remaining_marks = 0 if is_vip == 0 else None
 
         cursor.execute('''
             UPDATE users
-            SET is_vip = ?, vip_expire_at = ?, updated_at = ?
+            SET is_vip = ?, vip_expire_at = ?, remaining_marks = COALESCE(?, remaining_marks), updated_at = ?
             WHERE id = ?
-        ''', (is_vip, latest_expire, now, user_id))
+        ''', (is_vip, latest_expire, remaining_marks, now, user_id))
     
     def get_user_vip_status(self, user_id):
         user = self.get_user_by_id(user_id)
@@ -196,6 +240,57 @@ class DatabaseManager:
         purchases = cursor.fetchall()
         conn.close()
         return [dict(p) for p in purchases]
+    
+    def get_config(self, name):
+        """获取配置项的值"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM config WHERE name = ?', (name,))
+        result = cursor.fetchone()
+        conn.close()
+        return result['value'] if result else None
+    
+    def update_remaining_marks(self, user_id, marks):
+        """更新用户剩余标记次数"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = self.get_beijing_time()
+        cursor.execute('''
+            UPDATE users
+            SET remaining_marks = ?, updated_at = ?
+            WHERE id = ?
+        ''', (marks, now, user_id))
+        conn.commit()
+        conn.close()
+    
+    def decrement_remaining_marks(self, user_id):
+        """减少用户剩余标记次数（返回新的剩余次数）"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT remaining_marks FROM users WHERE id = ?', (user_id,))
+        result = cursor.fetchone()
+        if result and result['remaining_marks'] > 0:
+            new_marks = result['remaining_marks'] - 1
+            now = self.get_beijing_time()
+            cursor.execute('''
+                UPDATE users
+                SET remaining_marks = ?, updated_at = ?
+                WHERE id = ?
+            ''', (new_marks, now, user_id))
+            conn.commit()
+            conn.close()
+            return new_marks
+        conn.close()
+        return 0
+    
+    def get_remaining_marks(self, user_id):
+        """获取用户剩余标记次数"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT remaining_marks FROM users WHERE id = ?', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result['remaining_marks'] if result else 0
 
 # 尝试导入imageio_ffmpeg用于快速视频裁剪
 try:
@@ -520,8 +615,365 @@ class ScreenRecorder:
                                          style='Custom.TButton', width=4)
         self.user_avatar_btn.grid(row=0, column=8, padx=8, pady=4)
 
-        # 主框架 - 使用Frame和pack布局
-        self.main_frame = tk.Frame(self.root, bg=self.bg_color, padx=20, pady=20)
+        # 主框架 - 左侧导航 + 右侧内容
+        self.root_container = tk.Frame(self.root, bg=self.bg_color)
+        self.root_container.pack(fill=tk.BOTH, expand=True)
+
+        # 左侧导航框架
+        self.nav_frame = tk.Frame(self.root_container, bg=self.card_bg, width=150)
+        self.nav_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(10, 0), pady=10)
+        self.nav_frame.pack_propagate(False)
+
+        # Logo/标题区域
+        nav_title = tk.Label(self.nav_frame, text="直播录制助手",
+                           font=('Arial', 12, 'bold'),
+                           bg=self.card_bg, fg=self.accent_color)
+        nav_title.pack(pady=(15, 20))
+
+        # 导航按钮样式
+        nav_btn_style = {
+            'font': ('Segoe UI', 10),
+            'bg': self.card_bg,
+            'fg': self.secondary_text,
+            'activebackground': self.accent_color,
+            'activeforeground': '#ffffff',
+            'relief': 'flat',
+            'anchor': 'w',
+            'padx': 15,
+            'pady': 12,
+            'cursor': 'hand2'
+        }
+
+        # 导航按钮
+        self.nav_buttons = {}
+        nav_items = [
+            ('home', '🏠 首页'),
+            ('vip', '💎 会员'),
+            ('tutorial', '📖 使用教程'),
+            ('service', '📞 联系客服'),
+            ('about', 'ℹ️ 关于')
+        ]
+
+        for idx, (btn_id, btn_text) in enumerate(nav_items):
+            btn = tk.Label(self.nav_frame, text=btn_text, **nav_btn_style)
+            btn.pack(fill=tk.X, pady=1)
+            btn.bind('<Button-1>', lambda e, bid=btn_id: self.switch_tab(bid))
+            self.nav_buttons[btn_id] = btn
+
+        # 当前tab
+        self.current_tab = 'home'
+        self.highlight_nav(self.current_tab)
+
+        # 右侧内容区域容器
+        self.content_container = tk.Frame(self.root_container, bg=self.bg_color)
+        self.content_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # 创建5个tab页面
+        self.tab_pages = {}
+        for tab_id in ['home', 'vip', 'tutorial', 'service', 'about']:
+            page = tk.Frame(self.content_container, bg=self.bg_color)
+            page.pack(fill=tk.BOTH, expand=True)
+            self.tab_pages[tab_id] = page
+
+        # 首页内容（原有主页内容）
+        self.create_home_tab()
+
+        # 其他tab内容初始化
+        self.create_vip_tab()
+        self.create_tutorial_tab()
+        self.create_service_tab()
+        self.create_about_tab()
+
+        # 默认显示首页
+        self.show_tab('home')
+
+    def create_vip_tab(self):
+        """创建会员tab"""
+        page = self.tab_pages['vip']
+        
+        # 标题
+        title = tk.Label(page, text="💎 会员中心",
+                        font=('Arial', 18, 'bold'),
+                        bg=self.bg_color, fg=self.accent_color)
+        title.pack(anchor=tk.W, pady=(20, 10), padx=20)
+        
+        # 用户VIP状态卡片
+        self.vip_status_card = tk.Frame(page, bg=self.card_bg, padx=20, pady=15)
+        self.vip_status_card.pack(fill=tk.X, padx=20, pady=(0, 20))
+        
+        self.vip_status_label = tk.Label(self.vip_status_card, text="正在加载...",
+                                        font=('Arial', 12),
+                                        bg=self.card_bg, fg=self.text_color)
+        self.vip_status_label.pack(side=tk.LEFT)
+        
+        self.vip_days_label = tk.Label(self.vip_status_card, text="",
+                                        font=('Arial', 11),
+                                        bg=self.card_bg, fg=self.secondary_text)
+        self.vip_days_label.pack(side=tk.LEFT, padx=20)
+        
+        # 会员商品卡片容器
+        products_frame = tk.Frame(page, bg=self.bg_color)
+        products_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        # 商品卡片
+        products = [
+            {'name': '周会员', 'price': '9.9', 'days': 7, 'desc': '试用首选'},
+            {'name': '月会员', 'price': '29.9', 'days': 30, 'desc': '性价比最高'},
+            {'name': '年会员', 'price': '299', 'days': 365, 'desc': '超值优惠'}
+        ]
+        
+        for i, prod in enumerate(products):
+            card = tk.Frame(products_frame, bg=self.card_bg, padx=15, pady=15)
+            card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+            
+            name_label = tk.Label(card, text=prod['name'],
+                                font=('Arial', 14, 'bold'),
+                                bg=self.card_bg, fg=self.accent_color)
+            name_label.pack()
+            
+            price_label = tk.Label(card, text=f"¥{prod['price']}",
+                                 font=('Arial', 20, 'bold'),
+                                 bg=self.card_bg, fg=self.text_color)
+            price_label.pack(pady=10)
+            
+            desc_label = tk.Label(card, text=prod['desc'],
+                                font=('Arial', 9),
+                                bg=self.card_bg, fg=self.secondary_text)
+            desc_label.pack()
+            
+            days_label = tk.Label(card, text=f"有效期: {prod['days']}天",
+                                font=('Arial', 9),
+                                bg=self.card_bg, fg=self.secondary_text)
+            days_label.pack(pady=(5, 10))
+            
+            buy_btn = tk.Button(card, text="立即购买",
+                              command=lambda p=prod: self.buy_vip(p),
+                              bg=self.accent_color, fg='#ffffff',
+                              font=('Arial', 10, 'bold'),
+                              relief='flat', padx=20, pady=8, cursor='hand2')
+            buy_btn.pack()
+        
+        # 更新VIP状态显示
+        self.update_vip_status_display()
+
+    def update_vip_status_display(self):
+        """更新VIP状态显示"""
+        if not hasattr(self, 'vip_status_label'):
+            return
+            
+        if not self.is_logged_in:
+            self.vip_status_label.config(text="未登录", fg=self.secondary_text)
+            self.vip_days_label.config(text="")
+        else:
+            vip_status = self.db.get_user_vip_status(self.current_user['id'])
+            if vip_status['is_vip']:
+                self.vip_status_label.config(text="💎 VIP会员", fg=self.accent_color)
+                if vip_status['vip_expire_at']:
+                    self.vip_days_label.config(text=f"到期: {vip_status['vip_expire_at']}", fg=self.secondary_text)
+                else:
+                    self.vip_days_label.config(text="永久有效", fg=self.accent_color)
+            else:
+                self.vip_status_label.config(text="普通用户", fg=self.secondary_text)
+                self.vip_days_label.config(text="开通会员享受无限标记次数")
+
+    def buy_vip(self, product):
+        """购买VIP"""
+        if not self.is_logged_in:
+            self.show_notification("请先登录账号", is_weak=True)
+            self.show_login_dialog()
+            return
+        
+        purchase_id = self.db.purchase_vip(
+            user_id=self.current_user['id'],
+            vip_type="month" if product['days'] == 30 else ("year" if product['days'] == 365 else "week"),
+            vip_name=product['name'],
+            duration_days=product['days'],
+            amount=float(product['price'])
+        )
+        
+        if purchase_id:
+            self.show_notification(f"{product['name']}购买成功！", is_weak=True)
+            self.update_vip_status_display()
+        else:
+            self.show_notification("购买失败，请重试", is_weak=True)
+
+    def create_tutorial_tab(self):
+        """创建使用教程tab"""
+        page = self.tab_pages['tutorial']
+        
+        # 标题
+        title = tk.Label(page, text="📖 使用教程",
+                        font=('Arial', 18, 'bold'),
+                        bg=self.bg_color, fg=self.accent_color)
+        title.pack(anchor=tk.W, pady=(20, 20), padx=20)
+        
+        # 教程步骤
+        steps = [
+            ("1", "准备直播画面", "打开需要录制的直播页面或软件"),
+            ("2", "开始录屏", "点击「开始录屏」按钮，工具将开始录制屏幕内容"),
+            ("3", "标记进度", "在直播过程中，点击「标记进度」或按空格键添加标记点"),
+            ("4", "结束录屏", "直播结束后，点击「结束录屏」停止录制"),
+            ("5", "截取视频", "在进度条上拖拽选择起止点，点击「截取视频」生成片段"),
+            ("6", "保存分享", "生成的视频片段保存在recordings文件夹中，可随时查看")
+        ]
+        
+        for num, step_title, step_desc in steps:
+            step_frame = tk.Frame(page, bg=self.card_bg, padx=20, pady=15)
+            step_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+            
+            num_label = tk.Label(step_frame, text=num,
+                               font=('Arial', 16, 'bold'),
+                               bg=self.accent_color, fg='#ffffff',
+                               width=3, height=1)
+            num_label.pack(side=tk.LEFT, padx=(0, 15))
+            
+            content_frame = tk.Frame(step_frame, bg=self.card_bg)
+            content_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            step_title_label = tk.Label(content_frame, text=step_title,
+                                       font=('Arial', 12, 'bold'),
+                                       bg=self.card_bg, fg=self.text_color)
+            step_title_label.pack(anchor=tk.W)
+            
+            step_desc_label = tk.Label(content_frame, text=step_desc,
+                                      font=('Arial', 10),
+                                      bg=self.card_bg, fg=self.secondary_text)
+            step_desc_label.pack(anchor=tk.W, pady=(5, 0))
+
+    def create_service_tab(self):
+        """创建联系客服tab"""
+        page = self.tab_pages['service']
+        
+        # 标题
+        title = tk.Label(page, text="📞 联系客服",
+                        font=('Arial', 18, 'bold'),
+                        bg=self.bg_color, fg=self.accent_color)
+        title.pack(anchor=tk.W, pady=(20, 20), padx=20)
+        
+        # 联系信息卡片
+        info_card = tk.Frame(page, bg=self.card_bg, padx=30, pady=30)
+        info_card.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        # 客服微信
+        wechat_frame = tk.Frame(info_card, bg=self.card_bg)
+        wechat_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        tk.Label(wechat_frame, text="客服微信：",
+                font=('Arial', 12),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        tk.Label(wechat_frame, text="zhibo_helper",
+                font=('Arial', 12, 'bold'),
+                bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+        
+        # 客服邮箱
+        email_frame = tk.Frame(info_card, bg=self.card_bg)
+        email_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        tk.Label(email_frame, text="客服邮箱：",
+                font=('Arial', 12),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        tk.Label(email_frame, text="support@zhibo.com",
+                font=('Arial', 12),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        # 工作时间
+        time_frame = tk.Frame(info_card, bg=self.card_bg)
+        time_frame.pack(fill=tk.X)
+        
+        tk.Label(time_frame, text="工作时间：",
+                font=('Arial', 12),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        tk.Label(time_frame, text="周一至周五 9:00-18:00",
+                font=('Arial', 12),
+                bg=self.card_bg, fg=self.text_color).pack(side=tk.LEFT)
+        
+        # 提示
+        tip_label = tk.Label(page, text="* 遇到问题可通过以上方式联系我们",
+                           font=('Arial', 9),
+                           bg=self.bg_color, fg=self.secondary_text,
+                           pady=20)
+        tip_label.pack()
+
+    def create_about_tab(self):
+        """创建关于软件tab"""
+        page = self.tab_pages['about']
+        
+        # 标题
+        title = tk.Label(page, text="ℹ️ 关于软件",
+                        font=('Arial', 18, 'bold'),
+                        bg=self.bg_color, fg=self.accent_color)
+        title.pack(anchor=tk.W, pady=(20, 20), padx=20)
+        
+        # 关于信息卡片
+        about_card = tk.Frame(page, bg=self.card_bg, padx=30, pady=30)
+        about_card.pack(fill=tk.BOTH, expand=True, padx=20)
+        
+        # 软件名称
+        name_label = tk.Label(about_card, text="直播录制标记助手",
+                             font=('Arial', 16, 'bold'),
+                             bg=self.card_bg, fg=self.accent_color)
+        name_label.pack(pady=(0, 10))
+        
+        # 版本号
+        version_label = tk.Label(about_card, text="版本：v1.0.0",
+                                font=('Arial', 11),
+                                bg=self.card_bg, fg=self.text_color)
+        version_label.pack()
+        
+        # 描述
+        desc_label = tk.Label(about_card, text="一款专业的直播录制标记工具",
+                             font=('Arial', 10),
+                             bg=self.card_bg, fg=self.secondary_text,
+                             pady=10)
+        desc_label.pack()
+        
+        # 功能特点
+        features_label = tk.Label(about_card, 
+                                text="功能特点：\n• 屏幕录制\n• 进度标记\n• 视频截取\n• 多格式支持",
+                                font=('Arial', 10),
+                                bg=self.card_bg, fg=self.text_color,
+                                justify=tk.LEFT, pady=10)
+        features_label.pack(pady=10)
+        
+        # 版权信息
+        copyright_label = tk.Label(page, 
+                                 text="© 2024 直播录制标记助手 版权所有",
+                                 font=('Arial', 9),
+                                 bg=self.bg_color, fg=self.secondary_text,
+                                 pady=20)
+        copyright_label.pack()
+
+    def highlight_nav(self, tab_id):
+        """高亮导航按钮"""
+        for btn_id, btn in self.nav_buttons.items():
+            if btn_id == tab_id:
+                btn.config(bg=self.accent_color, fg='#ffffff')
+            else:
+                btn.config(bg=self.card_bg, fg=self.secondary_text)
+
+    def switch_tab(self, tab_id):
+        """切换tab"""
+        self.current_tab = tab_id
+        self.highlight_nav(tab_id)
+        self.show_tab(tab_id)
+
+    def show_tab(self, tab_id):
+        """显示指定tab"""
+        for tid, page in self.tab_pages.items():
+            if tid == tab_id:
+                page.pack(fill=tk.BOTH, expand=True)
+            else:
+                page.pack_forget()
+
+    def create_home_tab(self):
+        """创建首页tab"""
+        page = self.tab_pages['home']
+        
+        # 主框架
+        self.main_frame = tk.Frame(page, bg=self.bg_color)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
         # 左侧框架
@@ -918,6 +1370,9 @@ class ScreenRecorder:
         self.marker_count = 0
         self.clips = []
         
+        # 立即创建 markers.json（即使没有标记，用于工具校验）
+        self.save_markers_to_file()
+        
         # 重置视频文件名标签和修改按钮
         self.video_filename_label.config(text="")
         self.rename_btn.pack_forget()  # 隐藏修改按钮
@@ -1016,6 +1471,9 @@ class ScreenRecorder:
             # 保存当前视频的标记和片段
             self.video_markers[self.video_file] = self.markers.copy()
             self.video_clips[self.video_file] = self.clips.copy()
+            
+            # 保存 markers.json（即使没有标记也要保存，用于工具校验）
+            self.save_markers_to_file()
             
             self.play_btn.config(state=tk.NORMAL)
             self.show_notification("录屏完成", is_weak=True)
@@ -1513,20 +1971,24 @@ class ScreenRecorder:
                 time.sleep(0.1)
     
     def save_markers_to_file(self):
-        """保存标记信息到会话目录的JSON文件"""
-        if not self.current_session_dir or not self.markers:
+        """保存标记信息到会话目录的JSON文件（包含工具校验码）"""
+        if not self.current_session_dir:
             return
         
         markers_file = os.path.join(self.current_session_dir, "markers.json")
         try:
+            data = {
+                "tool_signature": "live_recorder_marker_tool_v1",
+                "markers": self.markers
+            }
             with open(markers_file, 'w', encoding='utf-8') as f:
-                json.dump(self.markers, f, ensure_ascii=False, indent=2)
+                json.dump(data, f, ensure_ascii=False, indent=2)
             print(f"标记已保存到: {markers_file}")
         except Exception as e:
             print(f"保存标记失败: {e}")
     
     def load_markers_from_file(self):
-        """从会话目录的JSON文件加载标记信息"""
+        """从会话目录的JSON文件加载标记信息（兼容新旧格式）"""
         if not self.current_session_dir:
             return []
         
@@ -1534,12 +1996,71 @@ class ScreenRecorder:
         if os.path.exists(markers_file):
             try:
                 with open(markers_file, 'r', encoding='utf-8') as f:
-                    markers = json.load(f)
+                    data = json.load(f)
+                # 兼容新旧格式
+                if isinstance(data, dict) and "markers" in data:
+                    markers = data["markers"]
+                else:
+                    markers = data  # 旧格式：直接是标记数组
                 print(f"从 {markers_file} 加载了 {len(markers)} 个标记")
                 return markers
             except Exception as e:
                 print(f"加载标记失败: {e}")
         return []
+    
+    def is_valid_tool_session(self, session_path):
+        """
+        验证会话目录是否为此工具产生的
+        
+        返回: (is_valid, error_message)
+        """
+        session_dir = os.path.basename(session_path)
+        
+        # 条件 1：目录名格式正确（YYYYMMDD_HHMMSS）
+        if len(session_dir) != 15 or session_dir[8] != '_':
+            return False, "目录名格式不正确"
+        date_part = session_dir[:8]
+        time_part = session_dir[9:]
+        if not date_part.isdigit() or not time_part.isdigit():
+            return False, "目录名格式不正确"
+        
+        # 条件 2：查找主视频文件
+        clip_dir = os.path.join(session_path, self.clip_dir)
+        all_files = os.listdir(session_path) if os.path.exists(session_path) else []
+        video_files = [f for f in all_files if f.endswith('.avi') and os.path.join(session_path, f) != clip_dir]
+        if os.path.exists(clip_dir):
+            clip_avi_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
+            video_files = [f for f in video_files if f not in clip_avi_files]
+        
+        if not video_files:
+            return False, "未找到主视频文件"
+        
+        video_file = video_files[0]
+        
+        # 条件 3：文件名格式正确
+        if not video_file.startswith('recording_') or not video_file.endswith('.avi'):
+            return False, "文件名格式不正确"
+        
+        # 条件 4：文件名与目录名匹配
+        expected_filename = f"recording_{session_dir}.avi"
+        if video_file != expected_filename:
+            return False, "文件名与目录名不匹配"
+        
+        # 条件 5：存在 markers.json 文件
+        markers_file = os.path.join(session_path, "markers.json")
+        if not os.path.exists(markers_file):
+            return False, "未找到标记文件"
+        
+        # 条件 6：校验工具签名
+        try:
+            with open(markers_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("tool_signature") != "live_recorder_marker_tool_v1":
+                return False, "无效的工具签名"
+        except Exception:
+            return False, "标记文件格式错误"
+        
+        return True, ""
     
     def calculate_video_duration(self):
         if self.video_file:
@@ -1808,6 +2329,15 @@ class ScreenRecorder:
         self.update_hints()
     
     def mark_progress(self, source="main"):
+        if not self.is_logged_in:
+            self.show_notification("请先登录账号", is_weak=True)
+            return
+        
+        remaining = self.db.get_remaining_marks(self.current_user['id'])
+        if remaining <= 0:
+            self.show_notification("剩余标记次数不足，请购买会员", is_weak=True)
+            return
+        
         # 如果正在录屏且处于暂停状态，不允许标记进度
         if self.recording and self.paused:
             # 先关闭可能存在的鼠标移入提示
@@ -1829,7 +2359,10 @@ class ScreenRecorder:
             return
         
         if self.recording or self.video_file:
-            # 统一使用 self.current_time，确保主页面和缩略功能区一致
+            new_remaining = self.db.decrement_remaining_marks(self.current_user['id'])
+            if new_remaining is None:
+                return
+            
             marker_time = self.current_time
             print(f"[调试] 添加标记: 时间={marker_time:.2f}")
             marker = {
@@ -1843,9 +2376,9 @@ class ScreenRecorder:
             self.update_progress_bar()
             # 显示在缩略功能区下方（如果有）
             if hasattr(self, 'mini_window') and self.mini_window:
-                self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True, parent=self.mini_window)
+                self.show_notification(f"已完成标记（剩余{new_remaining}次）", is_weak=True, parent=self.mini_window)
             else:
-                self.show_notification(f"已完成标记：{self.marker_count}", is_weak=True)
+                self.show_notification(f"已完成标记（剩余{new_remaining}次）", is_weak=True)
             # 保存标记到文件
             self.save_markers_to_file()
     
@@ -2924,7 +3457,7 @@ class ScreenRecorder:
         # 创建弹窗
         self.login_dialog = tk.Toplevel(self.root)
         self.login_dialog.title("账号登录")
-        self.login_dialog.geometry("500x850")
+        self.login_dialog.geometry("500x950")
         self.login_dialog.resizable(False, False)
         self.login_dialog.attributes('-topmost', True)
         self.login_dialog.configure(bg="#252525")
@@ -2933,8 +3466,8 @@ class ScreenRecorder:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - 500) // 2
-        y = (screen_height - 850) // 2
-        self.login_dialog.geometry(f"500x850+{x}+{y}")
+        y = (screen_height - 950) // 2
+        self.login_dialog.geometry(f"500x950+{x}+{y}")
         
         # ========== 标题区域 ==========
         title_frame = tk.Frame(self.login_dialog, bg="#4CAF50", padx=20, pady=25)
@@ -3047,11 +3580,30 @@ class ScreenRecorder:
         for widget in self.form_frame.winfo_children():
             widget.destroy()
 
+        mode = self.login_mode.get()
+
         phone_label = tk.Label(self.form_frame, text="手机号", bg="#252525", fg="#ffffff", font=('Arial', 12))
         phone_label.pack(anchor=tk.W, pady=(0, 5))
         self.phone_entry = tk.Entry(self.form_frame, bg="#2d2d2d", fg="#ffffff",
                                     insertbackground='white', font=('Arial', 12), bd=1, relief='solid')
         self.phone_entry.pack(fill=tk.X, pady=(0, 15))
+
+        if mode == "register":
+            code_label = tk.Label(self.form_frame, text="验证码", bg="#252525", fg="#ffffff", font=('Arial', 12))
+            code_label.pack(anchor=tk.W, pady=(0, 5))
+            
+            code_input_frame = tk.Frame(self.form_frame, bg="#252525")
+            code_input_frame.pack(fill=tk.X, pady=(0, 15))
+            
+            self.phone_code_entry = tk.Entry(code_input_frame, bg="#2d2d2d", fg="#ffffff",
+                                               insertbackground='white', font=('Arial', 12), bd=1, relief='solid', width=15)
+            self.phone_code_entry.pack(side=tk.LEFT, padx=(0, 10))
+            
+            self.send_code_btn = tk.Button(code_input_frame, text="发送验证码",
+                                         command=self.send_sms_code,
+                                         bg="#4CAF50", fg="#ffffff", font=('Arial', 10),
+                                         relief='flat', padx=10, pady=5)
+            self.send_code_btn.pack(side=tk.LEFT)
 
         pwd_label = tk.Label(self.form_frame, text="密码", bg="#252525", fg="#ffffff", font=('Arial', 12))
         pwd_label.pack(anchor=tk.W, pady=(0, 5))
@@ -3153,15 +3705,40 @@ class ScreenRecorder:
                 self.show_login_tip("请输入正确的手机号", is_success=False)
                 return
 
-            user = self.db.get_user_by_phone(phone)
-            if not user:
-                self.show_login_tip("该手机号未注册", is_success=False)
-            else:
-                if user['password_hash'] != hashlib.sha256(pwd.encode()).hexdigest():
-                    self.show_login_tip("密码错误", is_success=False)
-                else:
-                    self.db.update_last_login(user['id'])
+            if mode == "register":
+                code = self.phone_code_entry.get().strip()
+                if not code:
+                    self.show_login_tip("请输入验证码", is_success=False)
+                    return
+                if code != "123456":
+                    self.show_login_tip("验证码错误（演示：123456）", is_success=False)
+                    return
+
+                user = self.db.get_user_by_phone(phone)
+                if user:
+                    self.show_login_tip("该手机号已注册，请直接登录", is_success=False)
+                    return
+
+                user_id = self.db.create_user(
+                    phone=phone, password=pwd, nickname="手机用户", login_type="phone"
+                )
+                if user_id:
+                    user = self.db.get_user_by_id(user_id)
+                    self.db.update_last_login(user_id)
                     self.do_login(user)
+                else:
+                    self.show_login_tip("注册失败", is_success=False)
+
+            else:
+                user = self.db.get_user_by_phone(phone)
+                if not user:
+                    self.show_login_tip("该手机号未注册", is_success=False)
+                else:
+                    if user['password_hash'] != hashlib.sha256(pwd.encode()).hexdigest():
+                        self.show_login_tip("密码错误", is_success=False)
+                    else:
+                        self.db.update_last_login(user['id'])
+                        self.do_login(user)
 
         elif method == "wechat":
             user_id = self.db.create_user(
@@ -3587,6 +4164,11 @@ class ScreenRecorder:
             for session in sessions:
                 session_path = os.path.join(self.recordings_dir, session)
                 if os.path.isdir(session_path):
+                    # 先验证是否为工具产生的会话
+                    is_valid, _ = self.is_valid_tool_session(session_path)
+                    if not is_valid:
+                        continue
+                    
                     # 查找主视频文件（排除截取视频文件夹中的文件）
                     clip_dir = os.path.join(session_path, self.clip_dir)
                     all_files = os.listdir(session_path)
@@ -3632,6 +4214,15 @@ class ScreenRecorder:
                     session_path = session_paths[item_index]
                     
                     if os.path.exists(session_path):
+                        # 双重验证：确保是工具产生的视频
+                        is_valid, error_msg = self.is_valid_tool_session(session_path)
+                        if not is_valid:
+                            messagebox.showerror(
+                                "无法打开此视频",
+                                "该视频不是由本工具录制产生的。\n\n录制记录功能仅支持打开本工具录制的视频文件。"
+                            )
+                            return
+                        
                         # 查找主视频文件（排除截取视频文件夹中的文件）
                         clip_dir = os.path.join(session_path, self.clip_dir)
                         all_files = os.listdir(session_path)
