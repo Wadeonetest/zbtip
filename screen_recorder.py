@@ -15,6 +15,8 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta
 from PIL import Image, ImageTk
+import requests
+import webbrowser
 
 class DatabaseManager:
     def __init__(self, db_path="screen_recorder.db"):
@@ -110,6 +112,72 @@ class DatabaseManager:
                 INSERT INTO config (name, value, description)
                 VALUES (?, ?, ?)
             ''', ('vip_page_title', '购买会员解锁标记进度无限次使用\n购买会员解锁截取视频无限次使用', '会员页面title文案'))
+        
+        # 法律声明链接配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'legal_notice_url'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('legal_notice_url', 'https://www.example.com/legal', '法律声明链接'))
+        
+        # 用户协议链接配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'user_agreement_url'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('user_agreement_url', 'https://www.example.com/agreement', '用户协议链接'))
+        
+        # 创建 version_history 表（版本记录表）
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS version_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version TEXT NOT NULL UNIQUE,
+                release_date TEXT NOT NULL,
+                is_latest INTEGER DEFAULT 1,
+                update_url TEXT,
+                changelog TEXT,
+                file_hash TEXT
+            )
+        ''')
+        
+        # 初始化版本记录
+        cursor.execute("SELECT COUNT(*) FROM version_history")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO version_history (version, release_date, is_latest, update_url, changelog, file_hash)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', ('v1.0.0', '2026-05-01', 1, '', '初始版本', ''))
+        
+        # 创建 vip_products 表（会员商品配置）
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS vip_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                days INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                status INTEGER DEFAULT 1,
+                create_time TEXT NOT NULL,
+                update_time TEXT NOT NULL
+            )
+        ''')
+        
+        # 初始化默认会员商品
+        cursor.execute("SELECT COUNT(*) FROM vip_products")
+        if cursor.fetchone()[0] == 0:
+            now = self.get_beijing_time()
+            default_products = [
+                ('周会员', 9.9, 7, '试用首选', 1, 1, now, now),
+                ('月会员', 29.9, 30, '性价比最高', 2, 1, now, now),
+                ('年会员', 299.0, 365, '超值优惠', 3, 1, now, now)
+            ]
+            cursor.executemany('''
+                INSERT INTO vip_products (name, price, days, description, sort_order, status, create_time, update_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', default_products)
         
         # 检查并添加 remaining_marks 列（数据库迁移）
         cursor.execute("PRAGMA table_info(users)")
@@ -273,6 +341,72 @@ class DatabaseManager:
         result = cursor.fetchone()
         conn.close()
         return result['value'] if result else None
+    
+    def get_latest_version(self):
+        """获取最新版本信息"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM version_history WHERE is_latest = 1')
+        result = cursor.fetchone()
+        conn.close()
+        return dict(result) if result else None
+    
+    def compare_versions(self, v1, v2):
+        """比较版本号，返回 -1(v1<v2), 0(相等), 1(v1>v2)"""
+        v1_parts = [int(p) for p in v1.lstrip('v').split('.')]
+        v2_parts = [int(p) for p in v2.lstrip('v').split('.')]
+        for i in range(max(len(v1_parts), len(v2_parts))):
+            p1 = v1_parts[i] if i < len(v1_parts) else 0
+            p2 = v2_parts[i] if i < len(v2_parts) else 0
+            if p1 < p2:
+                return -1
+            elif p1 > p2:
+                return 1
+        return 0
+    
+    def download_file(self, url, save_path, progress_callback=None):
+        """下载文件（带进度回调）"""
+        import requests
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded_size = 0
+        
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    if progress_callback and total_size > 0:
+                        progress = (downloaded_size / total_size) * 100
+                        progress_callback(progress)
+        return save_path
+    
+    def verify_hash(self, file_path, expected_hash):
+        """校验文件哈希值"""
+        import hashlib
+        if not expected_hash:
+            return True
+        sha256_hash = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest() == expected_hash
+    
+    def get_vip_products(self):
+        """获取所有上架的会员商品，按sort_order排序"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, name, price, days, description, sort_order, status
+            FROM vip_products 
+            WHERE status = 1 
+            ORDER BY sort_order ASC
+        ''')
+        products = cursor.fetchall()
+        conn.close()
+        return [dict(p) for p in products]
     
     def update_remaining_marks(self, user_id, marks):
         """更新用户剩余标记次数"""
@@ -580,8 +714,8 @@ class ScreenRecorder:
         title_content_frame.pack(side=tk.LEFT, anchor=tk.CENTER, fill=tk.Y)
         
         title_label = tk.Label(title_content_frame, text="直播录制标记助手", 
-                font=('Arial', 18, 'bold'),
-                bg=self.card_bg, fg=self.text_color)
+                font=('STKaiti', 18, 'bold'),
+                bg=self.card_bg, fg='#2ecc71')
         title_label.pack(side=tk.TOP, anchor=tk.W)
         
         # 使用流程说明
@@ -670,12 +804,6 @@ class ScreenRecorder:
         self.nav_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(10, 0), pady=10)
         self.nav_frame.pack_propagate(False)
 
-        # Logo/标题区域
-        nav_title = tk.Label(self.nav_frame, text="直播录制助手",
-                           font=('Arial', 12, 'bold'),
-                           bg=self.card_bg, fg=self.accent_color)
-        nav_title.pack(pady=(15, 20))
-
         # 导航按钮样式
         nav_btn_style = {
             'font': ('Segoe UI', 10),
@@ -743,6 +871,20 @@ class ScreenRecorder:
                         bg=self.bg_color, fg=self.accent_color)
         title.pack(anchor=tk.W, pady=(20, 5), padx=20)
         
+        # 会员状态大卡片
+        self.vip_big_status_card = tk.Frame(page, bg=self.accent_color, padx=30, pady=25)
+        self.vip_big_status_card.pack(fill=tk.X, padx=20, pady=(0, 15))
+        
+        self.vip_big_status_label = tk.Label(self.vip_big_status_card, text="",
+                                            font=('Arial', 20, 'bold'),
+                                            bg=self.accent_color, fg="#ffffff")
+        self.vip_big_status_label.pack(side=tk.LEFT)
+        
+        self.vip_big_expire_label = tk.Label(self.vip_big_status_card, text="",
+                                          font=('Arial', 14),
+                                          bg=self.accent_color, fg="#ffffff")
+        self.vip_big_expire_label.pack(side=tk.RIGHT)
+        
         # 会员页面title文案（艺术字样式）
         vip_title_frame = tk.Frame(page, bg=self.bg_color)
         vip_title_frame.pack(anchor=tk.W, pady=(0, 20), padx=20)
@@ -777,43 +919,61 @@ class ScreenRecorder:
         products_frame = tk.Frame(page, bg=self.bg_color)
         products_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         
-        # 商品卡片
-        products = [
-            {'name': '周会员', 'price': '9.9', 'days': 7, 'desc': '试用首选'},
-            {'name': '月会员', 'price': '29.9', 'days': 30, 'desc': '性价比最高'},
-            {'name': '年会员', 'price': '299', 'days': 365, 'desc': '超值优惠'}
-        ]
+        # 从数据库读取商品
+        products = self.db.get_vip_products()
+        self.vip_product_cards = []
         
-        for i, prod in enumerate(products):
-            card = tk.Frame(products_frame, bg=self.card_bg, padx=15, pady=15)
-            card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        for prod in products:
+            # 外层容器
+            container = tk.Frame(products_frame, bg=self.bg_color)
+            container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
             
-            name_label = tk.Label(card, text=prod['name'],
-                                font=('Arial', 14, 'bold'),
-                                bg=self.card_bg, fg=self.accent_color)
-            name_label.pack()
+            # Canvas用于绘制圆角边框
+            canvas = tk.Canvas(container, bg=self.bg_color, highlightthickness=0)
+            canvas.pack(fill=tk.BOTH, expand=True)
             
-            price_label = tk.Label(card, text=f"¥{prod['price']}",
-                                 font=('Arial', 20, 'bold'),
-                                 bg=self.card_bg, fg=self.text_color)
-            price_label.pack(pady=10)
+            # 内部内容Frame
+            inner_frame = tk.Frame(canvas, bg=self.card_bg)
+            inner_frame.place(relx=0.03, rely=0.03, relwidth=0.94, relheight=0.94)
             
-            desc_label = tk.Label(card, text=prod['desc'],
-                                font=('Arial', 9),
-                                bg=self.card_bg, fg=self.secondary_text)
-            desc_label.pack()
+            tk.Label(inner_frame, text=prod['name'], font=('Arial', 14, 'bold'),
+                    bg=self.card_bg, fg=self.accent_color).pack()
             
-            days_label = tk.Label(card, text=f"有效期: {prod['days']}天",
-                                font=('Arial', 9),
-                                bg=self.card_bg, fg=self.secondary_text)
-            days_label.pack(pady=(5, 10))
+            tk.Label(inner_frame, text=f"¥{prod['price']}", font=('Arial', 20, 'bold'),
+                    bg=self.card_bg, fg=self.text_color).pack(pady=10)
             
-            buy_btn = tk.Button(card, text="立即购买",
-                              command=lambda p=prod: self.buy_vip(p),
-                              bg=self.accent_color, fg='#ffffff',
-                              font=('Arial', 10, 'bold'),
-                              relief='flat', padx=20, pady=8, cursor='hand2')
-            buy_btn.pack()
+            tk.Label(inner_frame, text=prod['description'], font=('Arial', 9),
+                    bg=self.card_bg, fg=self.secondary_text).pack()
+            
+            tk.Button(inner_frame, text="立即购买",
+                     command=lambda p=prod: self.buy_vip(p),
+                     bg=self.accent_color, fg='#ffffff',
+                     font=('Arial', 10, 'bold'),
+                     relief='flat', padx=20, pady=8, cursor='hand2').pack()
+            
+            # 绘制圆角边框
+            def draw_rounded_bg(event=None, c=canvas):
+                c.delete('rounded')
+                w = c.winfo_width()
+                h = c.winfo_height()
+                if w > 0 and h > 0:
+                    r = 15
+                    bw = 3  # 边框宽度
+                    # 绘制圆角边框
+                    c.create_arc(bw, bw, r*2-bw, r*2-bw, start=90, extent=90, fill='', outline=self.accent_color, width=bw, tags='rounded')
+                    c.create_arc(w-r*2+bw, bw, w-bw, r*2-bw, start=0, extent=90, fill='', outline=self.accent_color, width=bw, tags='rounded')
+                    c.create_arc(bw, h-r*2+bw, r*2-bw, h-bw, start=180, extent=90, fill='', outline=self.accent_color, width=bw, tags='rounded')
+                    c.create_arc(w-r*2+bw, h-r*2+bw, w-bw, h-bw, start=270, extent=90, fill='', outline=self.accent_color, width=bw, tags='rounded')
+                    c.create_line(r, bw, w-r, bw, fill=self.accent_color, width=bw, tags='rounded')
+                    c.create_line(r, h-bw, w-r, h-bw, fill=self.accent_color, width=bw, tags='rounded')
+                    c.create_line(bw, r, bw, h-r, fill=self.accent_color, width=bw, tags='rounded')
+                    c.create_line(w-bw, r, w-bw, h-r, fill=self.accent_color, width=bw, tags='rounded')
+            
+            canvas.bind('<Configure>', draw_rounded_bg)
+            # 强制更新布局后立即绘制圆角
+            container.update_idletasks()
+            draw_rounded_bg()
+            self.vip_product_cards.append(container)
         
         # 更新VIP状态显示
         self.update_vip_status_display()
@@ -878,17 +1038,40 @@ class ScreenRecorder:
             # 删除未登录文案，保持空白或隐藏
             self.vip_status_label.config(text="", fg=self.secondary_text)
             self.vip_days_label.config(text="")
+            
+            # 更新大状态卡片
+            if hasattr(self, 'vip_big_status_card'):
+                self.vip_big_status_card.config(bg="#666666")
+                self.vip_big_status_label.config(text="请先登录", bg="#666666")
+                self.vip_big_expire_label.config(text="", bg="#666666")
         else:
             vip_status = self.db.get_user_vip_status(self.current_user['id'])
             if vip_status['is_vip']:
+                # 更新小状态卡片
                 self.vip_status_label.config(text="💎 VIP会员", fg=self.accent_color)
                 if vip_status['vip_expire_at']:
                     self.vip_days_label.config(text=f"到期: {vip_status['vip_expire_at']}", fg=self.secondary_text)
                 else:
                     self.vip_days_label.config(text="永久有效", fg=self.accent_color)
+                
+                # 更新大状态卡片
+                if hasattr(self, 'vip_big_status_card'):
+                    self.vip_big_status_card.config(bg=self.accent_color)
+                    self.vip_big_status_label.config(text="🎉 您是VIP会员", bg=self.accent_color)
+                    if vip_status['vip_expire_at']:
+                        self.vip_big_expire_label.config(text=f"到期: {vip_status['vip_expire_at']}", bg=self.accent_color)
+                    else:
+                        self.vip_big_expire_label.config(text="永久有效", bg=self.accent_color)
             else:
+                # 更新小状态卡片
                 self.vip_status_label.config(text="普通用户", fg=self.secondary_text)
                 self.vip_days_label.config(text="开通会员享受无限标记次数")
+                
+                # 更新大状态卡片
+                if hasattr(self, 'vip_big_status_card'):
+                    self.vip_big_status_card.config(bg="#e74c3c")
+                    self.vip_big_status_label.config(text="📦 普通用户", bg="#e74c3c")
+                    self.vip_big_expire_label.config(text="开通会员享受更多功能", bg="#e74c3c")
 
     def buy_vip(self, product):
         """购买VIP"""
@@ -1030,20 +1213,66 @@ class ScreenRecorder:
                                 bg=self.card_bg, fg=self.text_color)
         version_label.pack()
         
-        # 描述
-        desc_label = tk.Label(about_card, text="一款专业的直播录制标记工具",
-                             font=('Arial', 10),
-                             bg=self.card_bg, fg=self.secondary_text,
-                             pady=10)
-        desc_label.pack()
+        # 版本检测按钮（圆角边框）
+        btn_container = tk.Frame(about_card, bg=self.card_bg, width=120, height=40)
+        btn_container.pack(pady=10)
+        btn_container.pack_propagate(False)
         
-        # 功能特点
-        features_label = tk.Label(about_card, 
-                                text="功能特点：\n• 屏幕录制\n• 进度标记\n• 视频截取\n• 多格式支持",
-                                font=('Arial', 10),
-                                bg=self.card_bg, fg=self.text_color,
-                                justify=tk.LEFT, pady=10)
-        features_label.pack(pady=10)
+        btn_canvas = tk.Canvas(btn_container, bg=self.card_bg, highlightthickness=0, width=120, height=40)
+        btn_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        check_version_btn = tk.Button(btn_canvas, text="版本检测",
+                                      command=self.check_version,
+                                      bg=self.card_bg, fg=self.text_color,
+                                      font=('Arial', 10),
+                                      relief='flat', padx=15, pady=5,
+                                      cursor='hand2')
+        btn_canvas.create_window(60, 20, window=check_version_btn)
+        
+        def draw_btn_rounded_bg(event=None):
+            btn_canvas.delete('rounded')
+            w = btn_canvas.winfo_width()
+            h = btn_canvas.winfo_height()
+            if w > 1 and h > 1:
+                r = 8
+                bw = 2
+                btn_canvas.create_arc(bw, bw, r*2-bw, r*2-bw, start=90, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
+                btn_canvas.create_arc(w-r*2+bw, bw, w-bw, r*2-bw, start=0, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
+                btn_canvas.create_arc(bw, h-r*2+bw, r*2-bw, h-bw, start=180, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
+                btn_canvas.create_arc(w-r*2+bw, h-r*2+bw, w-bw, h-bw, start=270, extent=90, fill='', outline='#888888', width=bw, tags='rounded')
+                btn_canvas.create_line(r, bw, w-r, bw, fill='#888888', width=bw, tags='rounded')
+                btn_canvas.create_line(r, h-bw, w-r, h-bw, fill='#888888', width=bw, tags='rounded')
+                btn_canvas.create_line(bw, r, bw, h-r, fill='#888888', width=bw, tags='rounded')
+                btn_canvas.create_line(w-bw, r, w-bw, h-r, fill='#888888', width=bw, tags='rounded')
+        
+        btn_container.after(50, draw_btn_rounded_bg)
+        btn_canvas.bind('<Configure>', draw_btn_rounded_bg)
+        
+        # 法律声明和用户协议区域
+        link_frame = tk.Frame(about_card, bg=self.card_bg)
+        link_frame.pack(pady=20)
+        
+        # 法律声明（超链接样式）
+        legal_label = tk.Label(link_frame, text="法律声明", 
+                              font=('Arial', 10, 'underline'),
+                              bg=self.card_bg, fg=self.text_color,
+                              cursor='hand2')
+        legal_label.pack(side=tk.LEFT, padx=15)
+        legal_label.bind('<Button-1>', lambda e: self.open_legal_notice())
+        
+        # 分隔符
+        sep_label = tk.Label(link_frame, text="|", 
+                           font=('Arial', 10),
+                           bg=self.card_bg, fg=self.secondary_text)
+        sep_label.pack(side=tk.LEFT, padx=5)
+        
+        # 用户协议（超链接样式）
+        agreement_label = tk.Label(link_frame, text="用户协议", 
+                                  font=('Arial', 10, 'underline'),
+                                  bg=self.card_bg, fg=self.text_color,
+                                  cursor='hand2')
+        agreement_label.pack(side=tk.LEFT, padx=15)
+        agreement_label.bind('<Button-1>', lambda e: self.open_user_agreement())
         
         # 版权信息
         copyright_label = tk.Label(page, 
@@ -1052,6 +1281,126 @@ class ScreenRecorder:
                                  bg=self.bg_color, fg=self.secondary_text,
                                  pady=20)
         copyright_label.pack()
+
+    def check_version(self):
+        """版本检测主入口"""
+        latest_version = self.db.get_latest_version()
+        if not latest_version:
+            messagebox.showinfo("提示", "无法获取版本信息")
+            return
+        
+        current_version = 'v1.0.0'
+        comparison = self.db.compare_versions(current_version, latest_version['version'])
+        
+        if comparison < 0:
+            self.show_update_dialog(latest_version)
+        elif comparison == 0:
+            messagebox.showinfo("提示", "当前已是最新版本")
+        else:
+            messagebox.showinfo("提示", "当前版本高于服务器版本")
+    
+    def show_update_dialog(self, version_info):
+        """显示更新弹窗"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("发现新版本")
+        dialog.geometry("400x320")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        current_version = 'v1.0.0'
+        
+        tk.Label(dialog, text="🎉 发现新版本", font=('Arial', 14, 'bold'), fg='green').pack(pady=(15, 5))
+        tk.Label(dialog, text=f"当前版本: {current_version}", font=('Arial', 11)).pack(pady=5)
+        tk.Label(dialog, text=f"最新版本: {version_info['version']}", font=('Arial', 11, 'bold'), fg='green').pack(pady=5)
+        
+        tk.Label(dialog, text="更新说明:", font=('Arial', 11)).pack(pady=(10, 0))
+        changelog_text = tk.Text(dialog, height=4, width=40, wrap=tk.WORD, font=('Arial', 10))
+        changelog_text.insert(tk.END, version_info['changelog'] if version_info['changelog'] else '暂无更新说明')
+        changelog_text.config(state=tk.DISABLED)
+        changelog_text.pack(pady=5, padx=20)
+        
+        self.progress_var = tk.DoubleVar()
+        progress_bar = ttk.Progressbar(dialog, variable=self.progress_var, maximum=100, length=300)
+        progress_bar.pack(pady=10)
+        progress_label = tk.Label(dialog, textvariable=self.progress_var)
+        progress_label.pack()
+        
+        def update_progress(progress):
+            self.progress_var.set(f"{progress:.1f}%")
+        
+        def start_update():
+            for btn in buttons:
+                btn.config(state=tk.DISABLED)
+            progress_bar.config(mode='indeterminate')
+            progress_bar.start()
+            
+            try:
+                if not version_info['update_url']:
+                    messagebox.showinfo("提示", "当前版本暂无可下载的更新包")
+                    progress_bar.stop()
+                    progress_bar.config(mode='determinate')
+                    for btn in buttons:
+                        btn.config(state=tk.NORMAL)
+                    return
+                
+                update_file = os.path.join(os.getcwd(), 'updates', f"update_{version_info['version']}.exe")
+                progress_bar.stop()
+                progress_bar.config(mode='determinate')
+                self.db.download_file(version_info['update_url'], update_file, update_progress)
+                
+                if not self.db.verify_hash(update_file, version_info['file_hash']):
+                    messagebox.showerror("错误", "文件校验失败")
+                    progress_bar.stop()
+                    for btn in buttons:
+                        btn.config(state=tk.NORMAL)
+                    return
+                
+                messagebox.showinfo("提示", "更新包下载完成，即将启动安装程序")
+                
+                self.root.destroy()
+                subprocess.Popen([update_file])
+                sys.exit(0)
+                
+            except Exception as e:
+                messagebox.showerror("错误", f"更新失败: {str(e)}")
+                progress_bar.stop()
+                progress_bar.config(mode='determinate')
+                self.progress_var.set("0%")
+                for btn in buttons:
+                    btn.config(state=tk.NORMAL)
+        
+        def cancel_update():
+            dialog.destroy()
+        
+        buttons_frame = tk.Frame(dialog)
+        buttons_frame.pack(pady=10)
+        
+        update_btn = tk.Button(buttons_frame, text="立即更新", command=start_update, 
+                               bg='green', fg='white', padx=25, pady=5)
+        update_btn.pack(side=tk.LEFT, padx=15)
+        
+        cancel_btn = tk.Button(buttons_frame, text="稍后提醒", command=cancel_update, 
+                               padx=25, pady=5)
+        cancel_btn.pack(side=tk.LEFT)
+        
+        buttons = [update_btn, cancel_btn]
+    
+    def open_legal_notice(self):
+        """打开法律声明"""
+        url = self.db.get_config('legal_notice_url')
+        if url:
+            webbrowser.open(url)
+        else:
+            messagebox.showinfo("提示", "法律声明链接未配置")
+    
+    def open_user_agreement(self):
+        """打开用户协议"""
+        url = self.db.get_config('user_agreement_url')
+        if url:
+            webbrowser.open(url)
+        else:
+            messagebox.showinfo("提示", "用户协议链接未配置")
 
     def highlight_nav(self, tab_id):
         """高亮导航按钮"""
@@ -2015,8 +2364,14 @@ class ScreenRecorder:
             self.marker_count = 0
         
         # 加载当前视频的片段
+        print(f"\n=== 加载片段 ===")
+        print(f"当前视频文件: {self.video_file}")
+        print(f"当前会话目录: {self.current_session_dir}")
+        print(f"video_clips中是否存在: {self.video_file in self.video_clips}")
+        
         if self.video_file in self.video_clips:
             # 从内存中加载片段
+            print(f"从内存加载片段，数量: {len(self.video_clips[self.video_file])}")
             self.clips = self.video_clips[self.video_file].copy()
         else:
             # 从文件系统读取片段
@@ -2024,13 +2379,21 @@ class ScreenRecorder:
             # 检查截取视频文件夹
             if self.current_session_dir:
                 clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
+                print(f"截取视频文件夹路径: {clip_dir}")
+                print(f"截取视频文件夹存在: {os.path.exists(clip_dir)}")
+                
                 if os.path.exists(clip_dir):
+                    items = os.listdir(clip_dir)
+                    print(f"截取视频文件夹中的项目数量: {len(items)}")
+                    
                     # 查找子目录（每个片段一个文件夹）
-                    for item in os.listdir(clip_dir):
+                    for item in items:
                         item_path = os.path.join(clip_dir, item)
                         if os.path.isdir(item_path):
                             # 验证这个文件夹是否是有效的片段文件夹
                             is_valid, error_msg, clip_info = self.is_valid_clip_folder(item_path)
+                            print(f"检查文件夹: {item}, 有效: {is_valid}, 错误: {error_msg}")
+                            
                             if is_valid:
                                 print(f"找到有效片段文件夹: {item}")
                                 # 从签名文件中获取片段信息，或者构建默认信息
@@ -2886,6 +3249,11 @@ class ScreenRecorder:
             self.play_video()
     
     def update_clips(self):
+        print(f"\n=== update_clips 被调用 ===")
+        print(f"self.clips 长度: {len(self.clips)}")
+        print(f"self.clips 内容: {self.clips}")
+        print(f"clip_listbox 是否存在: {hasattr(self, 'clip_listbox')}")
+        
         self.clip_listbox.delete(0, tk.END)
         
         # 获取当前视频的文件名（不含路径和后缀）
@@ -2923,7 +3291,10 @@ class ScreenRecorder:
                 # 格式：{视频文件名}_{片段 id}: {开始时间} - {结束时间} ({标记名称})
                 item = f"{video_filename}片段 {clip['id']}: {start} - {end} ({marker_name})"
             clip_items.append(item)
+            print(f"插入片段: {item}")
             self.clip_listbox.insert(tk.END, item)
+        
+        print(f"插入完成后 listbox size: {self.clip_listbox.size()}")
         
         # 计算最长的片段名称长度，并设置列表框宽度
         if clip_items:
@@ -2944,7 +3315,20 @@ class ScreenRecorder:
         selected = self.clip_listbox.curselection()
         if selected:
             clip = self.clips[selected[0]]
-            self.play_clip(clip)
+            # 注释掉原来的内部播放器代码
+            # self.play_clip(clip)
+            
+            # 改为打开系统播放器
+            import os
+            clip_folder = clip.get('folder_name', f"recording_{self.current_session_dir.split(os.sep)[-1]}_片段_{clip['id']}")
+            clip_path = os.path.join(self.current_session_dir, "截取视频", clip_folder, "clip.avi")
+            
+            if os.path.exists(clip_path):
+                print(f"打开系统播放器播放: {clip_path}")
+                os.startfile(clip_path)
+            else:
+                self.show_notification("片段文件不存在", is_weak=True)
+                print(f"片段文件不存在: {clip_path}")
     
     def play_clip(self, clip):
         if self.video_file:
@@ -4030,6 +4414,7 @@ class ScreenRecorder:
         self.show_login_tip(f"登录成功，欢迎 {self.current_user['name']}", is_success=True)
         self.update_mark_badge()
         self.update_finish_clip_badge()
+        self.update_vip_status_display()
         self.login_dialog.after(1500, lambda: self.login_dialog.destroy())
     
     def show_user_info(self):
@@ -4451,11 +4836,11 @@ class ScreenRecorder:
                         else:
                             formatted_time = session_time
                         
-                        # 统计截取视频数量
+                        # 统计截取视频数量（新结构：每个片段一个文件夹）
                         clip_count = 0
                         if os.path.exists(clip_dir):
-                            clip_files = [f for f in os.listdir(clip_dir) if f.endswith('.avi')]
-                            clip_count = len(clip_files)
+                            clip_folders = [f for f in os.listdir(clip_dir) if os.path.isdir(os.path.join(clip_dir, f))]
+                            clip_count = len(clip_folders)
                         
                         # 添加到表格
                         record_content = f"主视频: {current_filename} - 截取: {clip_count}个"
@@ -4573,8 +4958,11 @@ class ScreenRecorder:
             for item in os.listdir(parent_path):
                 item_path = os.path.join(parent_path, item)
                 if os.path.isdir(item_path):
-                    # 添加文件夹节点（带emoji图标）
-                    folder_id = self.folder_tree.insert(parent_id, tk.END, text="📂 " + item, values=[item_path], open=False)
+                    # 检查当前子文件夹是否有子文件夹
+                    child_subdirs = [subitem for subitem in os.listdir(item_path) if os.path.isdir(os.path.join(item_path, subitem))]
+                    # 如果有子文件夹则展开，否则收起（只有视频文件时收起）
+                    is_expand = len(child_subdirs) > 0
+                    folder_id = self.folder_tree.insert(parent_id, tk.END, text="📂 " + item, values=[item_path], open=is_expand)
                     # 递归添加子节点
                     self._add_folder_children(folder_id, item_path)
                 else:
