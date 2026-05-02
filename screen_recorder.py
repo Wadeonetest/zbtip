@@ -18,6 +18,8 @@ from PIL import Image, ImageTk
 import requests
 import webbrowser
 
+CURRENT_VERSION = 'v1.0.0'
+
 class DatabaseManager:
     def __init__(self, db_path="screen_recorder.db"):
         self.db_path = db_path
@@ -138,15 +140,22 @@ class DatabaseManager:
                 is_latest INTEGER DEFAULT 1,
                 update_url TEXT,
                 changelog TEXT,
-                file_hash TEXT
+                file_hash TEXT,
+                force_update INTEGER DEFAULT 0
             )
         ''')
+        
+        # 检查并添加 force_update 字段（数据库迁移）
+        cursor.execute("PRAGMA table_info(version_history)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'force_update' not in columns:
+            cursor.execute("ALTER TABLE version_history ADD COLUMN force_update INTEGER DEFAULT 0")
         
         # 初始化版本记录
         cursor.execute("SELECT COUNT(*) FROM version_history")
         if cursor.fetchone()[0] == 0:
             cursor.execute('''
-                INSERT INTO version_history (version, release_date, is_latest, update_url, changelog, file_hash)
+                INSERT INTO version_history (version, release_date, is_latest, update_url, changelog, file_hash, force_update)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', ('v1.0.0', '2026-05-01', 1, '', '初始版本', ''))
         
@@ -1208,7 +1217,7 @@ class ScreenRecorder:
         name_label.pack(pady=(0, 10))
         
         # 版本号
-        version_label = tk.Label(about_card, text="版本：v1.0.0",
+        version_label = tk.Label(about_card, text=f"版本：{CURRENT_VERSION}",
                                 font=('Arial', 11),
                                 bg=self.card_bg, fg=self.text_color)
         version_label.pack()
@@ -1289,8 +1298,7 @@ class ScreenRecorder:
             messagebox.showinfo("提示", "无法获取版本信息")
             return
         
-        current_version = 'v1.0.0'
-        comparison = self.db.compare_versions(current_version, latest_version['version'])
+        comparison = self.db.compare_versions(CURRENT_VERSION, latest_version['version'])
         
         if comparison < 0:
             self.show_update_dialog(latest_version)
@@ -1303,15 +1311,27 @@ class ScreenRecorder:
         """显示更新弹窗"""
         dialog = tk.Toplevel(self.root)
         dialog.title("发现新版本")
-        dialog.geometry("400x320")
+        dialog.geometry("400x480")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
         
-        current_version = 'v1.0.0'
+        dialog.update_idletasks()
+        parent_x = self.root.winfo_x()
+        parent_y = self.root.winfo_y()
+        parent_w = self.root.winfo_width()
+        parent_h = self.root.winfo_height()
+        dialog_w = 400
+        dialog_h = 480
+        pos_x = parent_x + (parent_w - dialog_w) // 2
+        pos_y = parent_y + (parent_h - dialog_h) // 2
+        dialog.geometry(f"400x480+{pos_x}+{pos_y}")
         
-        tk.Label(dialog, text="🎉 发现新版本", font=('Arial', 14, 'bold'), fg='green').pack(pady=(15, 5))
-        tk.Label(dialog, text=f"当前版本: {current_version}", font=('Arial', 11)).pack(pady=5)
+        if version_info.get('force_update'):
+            dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        
+        tk.Label(dialog, text="发现新版本", font=('Arial', 14, 'bold'), fg='green').pack(pady=(15, 5))
+        tk.Label(dialog, text=f"当前版本: {CURRENT_VERSION}", font=('Arial', 11)).pack(pady=5)
         tk.Label(dialog, text=f"最新版本: {version_info['version']}", font=('Arial', 11, 'bold'), fg='green').pack(pady=5)
         
         tk.Label(dialog, text="更新说明:", font=('Arial', 11)).pack(pady=(10, 0))
@@ -1323,35 +1343,28 @@ class ScreenRecorder:
         self.progress_var = tk.DoubleVar()
         progress_bar = ttk.Progressbar(dialog, variable=self.progress_var, maximum=100, length=300)
         progress_bar.pack(pady=10)
-        progress_label = tk.Label(dialog, textvariable=self.progress_var)
-        progress_label.pack()
         
         def update_progress(progress):
-            self.progress_var.set(f"{progress:.1f}%")
+            self.progress_var.set(progress)
         
         def start_update():
             for btn in buttons:
                 btn.config(state=tk.DISABLED)
-            progress_bar.config(mode='indeterminate')
-            progress_bar.start()
+            self.progress_var.set(0)
             
             try:
                 if not version_info['update_url']:
                     messagebox.showinfo("提示", "当前版本暂无可下载的更新包")
-                    progress_bar.stop()
-                    progress_bar.config(mode='determinate')
+                    self.progress_var.set(0)
                     for btn in buttons:
                         btn.config(state=tk.NORMAL)
                     return
                 
                 update_file = os.path.join(os.getcwd(), 'updates', f"update_{version_info['version']}.exe")
-                progress_bar.stop()
-                progress_bar.config(mode='determinate')
                 self.db.download_file(version_info['update_url'], update_file, update_progress)
                 
                 if not self.db.verify_hash(update_file, version_info['file_hash']):
                     messagebox.showerror("错误", "文件校验失败")
-                    progress_bar.stop()
                     for btn in buttons:
                         btn.config(state=tk.NORMAL)
                     return
@@ -1364,27 +1377,22 @@ class ScreenRecorder:
                 
             except Exception as e:
                 messagebox.showerror("错误", f"更新失败: {str(e)}")
-                progress_bar.stop()
-                progress_bar.config(mode='determinate')
-                self.progress_var.set("0%")
+                self.progress_var.set(0)
                 for btn in buttons:
                     btn.config(state=tk.NORMAL)
         
         def cancel_update():
             dialog.destroy()
         
-        buttons_frame = tk.Frame(dialog)
-        buttons_frame.pack(pady=10)
+        buttons_frame = tk.Frame(dialog, bg='#f0f0f0')
+        buttons_frame.pack(pady=15)
         
         update_btn = tk.Button(buttons_frame, text="立即更新", command=start_update, 
-                               bg='green', fg='white', padx=25, pady=5)
-        update_btn.pack(side=tk.LEFT, padx=15)
+                               bg='green', fg='white', padx=25, pady=8, font=('Arial', 10, 'bold'),
+                               cursor='hand2')
+        update_btn.pack()
         
-        cancel_btn = tk.Button(buttons_frame, text="稍后提醒", command=cancel_update, 
-                               padx=25, pady=5)
-        cancel_btn.pack(side=tk.LEFT)
-        
-        buttons = [update_btn, cancel_btn]
+        buttons = [update_btn]
     
     def open_legal_notice(self):
         """打开法律声明"""
