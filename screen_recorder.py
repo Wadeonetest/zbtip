@@ -4224,7 +4224,7 @@ class ScreenRecorder:
         content_frame.pack(fill=tk.BOTH, expand=True)
         
         # 登录/注册切换（使用按钮样式）
-        self.login_mode = tk.StringVar(value="login")
+        self.login_mode = tk.StringVar(value="register")
         
         mode_frame = tk.Frame(content_frame, bg="#252525")
         mode_frame.pack(fill=tk.X, pady=(0, 20))
@@ -4253,7 +4253,7 @@ class ScreenRecorder:
         self.login_mode.trace('w', lambda *args: update_mode_buttons())
         
         # 登录方式选择（使用按钮样式）
-        self.login_method = tk.StringVar(value="wechat")
+        self.login_method = tk.StringVar(value="phone")
 
         method_label = tk.Label(content_frame, text="选择登录方式", bg="#252525", fg="#ffffff", font=('Arial', 11))
         method_label.pack(anchor=tk.W, pady=(0, 10))
@@ -4270,13 +4270,13 @@ class ScreenRecorder:
                             fg="#ffffff" if method == "wechat" else "#b0b0b0",
                             relief='sunken' if method == "wechat" else 'flat')
 
-        phone_btn = tk.Button(method_frame, text="📱 手机号", bg="#333333", fg="#b0b0b0",
-                            font=('Arial', 11), relief='flat', padx=16, pady=8,
+        phone_btn = tk.Button(method_frame, text="📱 手机号", bg="#4CAF50", fg="#ffffff",
+                            font=('Arial', 11), relief='sunken', padx=16, pady=8,
                             command=lambda: self.login_method.set("phone"))
         phone_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        wechat_btn = tk.Button(method_frame, text="💬 微信", bg="#4CAF50", fg="#ffffff",
-                             font=('Arial', 11), relief='sunken', padx=16, pady=8,
+        wechat_btn = tk.Button(method_frame, text="💬 微信", bg="#333333", fg="#b0b0b0",
+                             font=('Arial', 11), relief='flat', padx=16, pady=8,
                              command=lambda: self.login_method.set("wechat"))
         wechat_btn.pack(side=tk.LEFT)
 
@@ -4287,7 +4287,7 @@ class ScreenRecorder:
         self.form_frame.pack(fill=tk.X)
 
         # 显示默认表单
-        self.show_wechat_form()
+        self.show_phone_form()
         
         # 登录按钮
         self.submit_btn = tk.Button(content_frame, text="登录", command=self.handle_login, 
@@ -4301,6 +4301,9 @@ class ScreenRecorder:
                                     bg="#252525")
         forget_pwd_label.pack(side=tk.RIGHT)
         forget_pwd_label.bind("<Button-1>", lambda e: self.show_forgot_password_dialog())
+        
+        # 初始化按钮样式（必须在submit_btn创建后调用）
+        update_mode_buttons()
         
         # 绑定模式切换
         self.login_mode.trace('w', lambda *args: self.on_mode_change())
@@ -4546,13 +4549,6 @@ class ScreenRecorder:
                             bg="#252525", fg="#4CAF50" if vip_status['is_vip'] else "#b0b0b0", 
                             font=('Arial', 11))
         vip_label.pack(anchor=tk.W, pady=(0, 15))
-        
-        if not vip_status['is_vip']:
-            vip_btn = tk.Button(info_frame, text="开通VIP（演示）", 
-                              command=lambda: self.demo_purchase_vip(),
-                              bg="#FF9800", fg="#ffffff", font=('Arial', 10, 'bold'),
-                              relief='flat', padx=16, pady=8)
-            vip_btn.pack(fill=tk.X, pady=(0, 10))
         
         logout_btn = tk.Button(info_frame, text="退出登录", command=lambda: self.do_logout(user_dialog),
                                bg="#f44336", fg="#ffffff", font=('Arial', 11, 'bold'),
@@ -5498,39 +5494,43 @@ class ScreenRecorder:
         button_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
         button_frame.pack(fill=tk.X, pady=(0, 15), padx=20)
         
-        # 创建按钮
+        # 创建按钮 - 全部顶部对齐
         self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10, takefocus=False)
-        self.mini_pause_btn.pack(side=tk.LEFT, padx=10)  # 增加按钮间距
+        self.mini_pause_btn.pack(side=tk.LEFT, padx=10, anchor=tk.N)
         
         self.mini_stop_btn = ttk.Button(button_frame, text="结束录屏", command=self.stop_recording, width=10)
-        self.mini_stop_btn.pack(side=tk.LEFT, padx=10)
+        self.mini_stop_btn.pack(side=tk.LEFT, padx=10, anchor=tk.N)
         
-        # 标记进度按钮容器
+        # 标记进度按钮容器 - 垂直布局（按钮在上，角标在下），顶部对齐
         mark_btn_frame = tk.Frame(button_frame, bg="#1a1a1a")
-        mark_btn_frame.pack(side=tk.LEFT, padx=10)
+        mark_btn_frame.pack(side=tk.LEFT, padx=10, anchor=tk.N)
+        
+        # 按钮行容器
+        btn_row_frame = tk.Frame(mark_btn_frame, bg="#1a1a1a")
+        btn_row_frame.pack(side=tk.TOP)
         
         # 修改标记进度按钮颜色，使其更突出
-        self.mini_mark_btn = ttk.Button(mark_btn_frame, text="标记进度[空格]", 
+        self.mini_mark_btn = ttk.Button(btn_row_frame, text="标记进度[空格]", 
                                        command=lambda: self.mark_progress(source="mini"), width=14, takefocus=False)
         # 配置按钮样式
         self.mini_mark_btn.configure(style='Accent.TButton')
         self.mini_mark_btn.pack(side=tk.LEFT)
         
-        # 缩略窗口标记按钮角标 - 放在按钮右侧
-        self.mini_mark_badge = tk.Label(mark_btn_frame, text="试用：2",
-                                        font=('Arial', 9, 'bold'),
-                                        bg="#FF0000", fg="#ffffff",
-                                        padx=6, pady=2, relief=tk.RAISED, 
-                                        borderwidth=2)
-        self.mini_mark_badge.pack(side=tk.LEFT, padx=2)
-        
-        # 添加提示图形（圆形+？）
-        help_canvas = tk.Canvas(mark_btn_frame, width=20, height=20, bg="#1a1a1a", highlightthickness=0)
+        # 添加提示图形（圆形+？）- 与按钮同一行
+        help_canvas = tk.Canvas(btn_row_frame, width=20, height=24, bg="#1a1a1a", highlightthickness=0)
         help_canvas.pack(side=tk.LEFT, padx=5)
         # 绘制圆形
         help_canvas.create_oval(2, 2, 18, 18, fill="#34a853", outline="white", width=2)
         # 绘制问号
         help_canvas.create_text(10, 12, text="?", fill="white", font=('Arial', 12, 'bold'))
+        
+        # 缩略窗口标记按钮角标 - 放在按钮下方
+        self.mini_mark_badge = tk.Label(mark_btn_frame, text="试用：2",
+                                        font=('Arial', 9, 'bold'),
+                                        bg="#FF0000", fg="#ffffff",
+                                        padx=6, pady=2, relief=tk.RAISED, 
+                                        borderwidth=2)
+        self.mini_mark_badge.pack(side=tk.TOP, pady=(2, 0), anchor=tk.W)
         
         # 添加鼠标移入提示
         def show_mark_tooltip(event):
