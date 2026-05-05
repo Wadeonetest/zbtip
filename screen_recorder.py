@@ -923,8 +923,10 @@ class ScreenRecorder:
         self.video_library_btn.grid(row=0, column=7, padx=8, pady=4)
         
         # 用户头像按钮（在最小化按钮左边）
-        self.user_avatar_btn = ttk.Button(self.button_frame, text="👤", command=self.show_login_dialog, 
-                                         style='Custom.TButton', width=4)
+        self.user_avatar_btn = tk.Button(self.button_frame, text="👤", command=self.show_login_dialog,
+                                        bg=self.accent_color, fg="#ffffff", font=('Arial', 14),
+                                        relief='flat', bd=0, padx=8, pady=2,
+                                        highlightthickness=0, cursor='hand2')
         self.user_avatar_btn.grid(row=0, column=8, padx=8, pady=4)
 
         # 主框架 - 左侧导航 + 右侧内容
@@ -4823,7 +4825,7 @@ class ScreenRecorder:
         """显示用户信息弹窗"""
         user_dialog = tk.Toplevel(self.root)
         user_dialog.title("用户信息")
-        user_dialog.geometry("350x480")
+        user_dialog.geometry("350x624")
         user_dialog.resizable(False, False)
         user_dialog.attributes('-topmost', True)
         user_dialog.configure(bg="#252525")
@@ -4831,8 +4833,8 @@ class ScreenRecorder:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - 350) // 2
-        y = (screen_height - 480) // 2
-        user_dialog.geometry(f"350x480+{x}+{y}")
+        y = (screen_height - 624) // 2
+        user_dialog.geometry(f"350x624+{x}+{y}")
         
         avatar_frame = tk.Frame(user_dialog, bg="#4CAF50", padx=50, pady=20)
         avatar_frame.pack(fill=tk.X)
@@ -4894,12 +4896,21 @@ class ScreenRecorder:
                      bg="#252525", fg="#4CAF50", font=('Arial', 11)).pack(anchor=tk.W)
         elif can_edit_invite:
             # 可以填写邀请码
-            invite_entry = tk.Entry(invite_frame, bg="#333333", fg="#ffffff", 
-                                   font=('Arial', 11), relief='flat', width=20)
-            invite_entry.pack(anchor=tk.W, pady=(0, 8))
+            # 输入框和按钮放在同一行
+            input_row = tk.Frame(invite_frame, bg="#252525")
+            input_row.pack(anchor=tk.W, pady=(0, 5))
+            
+            invite_entry = tk.Entry(input_row, bg="#333333", fg="#ffffff",
+                                   font=('Arial', 11), relief='flat', width=16)
+            invite_entry.pack(side=tk.LEFT, padx=(0, 5))
+            
+            submit_btn = tk.Button(input_row, text="确认", command=lambda: submit_invite_code(),
+                                   bg="#4CAF50", fg="#ffffff", font=('Arial', 10, 'bold'),
+                                   relief='flat', padx=10, pady=3)
+            submit_btn.pack(side=tk.LEFT)
             
             # 错误提示标签
-            error_label = tk.Label(invite_frame, text="", 
+            error_label = tk.Label(invite_frame, text="",
                                   bg="#252525", fg="#f44336", font=('Arial', 9))
             error_label.pack(anchor=tk.W)
             
@@ -4932,11 +4943,6 @@ class ScreenRecorder:
                     self.update_invite_display()
                 else:
                     error_label.config(text="操作失败，请重试")
-            
-            submit_btn = tk.Button(invite_frame, text="确认", command=submit_invite_code,
-                                   bg="#4CAF50", fg="#ffffff", font=('Arial', 10, 'bold'),
-                                   relief='flat', padx=10, pady=3)
-            submit_btn.pack(anchor=tk.W)
         else:
             # 超过24小时，不可填写
             tk.Label(invite_frame, text="超过24小时，无法填写邀请码", 
