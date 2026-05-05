@@ -26,7 +26,7 @@ class DatabaseManager:
         self.init_database()
     
     def get_connection(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
     
@@ -156,8 +156,8 @@ class DatabaseManager:
         if cursor.fetchone()[0] == 0:
             cursor.execute('''
                 INSERT INTO version_history (version, release_date, is_latest, update_url, changelog, file_hash, force_update)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', ('v1.0.0', '2026-05-01', 1, '', '初始版本', ''))
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', ('v1.0.0', '2026-05-01', 1, '', '初始版本', '', 0))
         
         # 创建 vip_products 表（会员商品配置）
         cursor.execute('''
@@ -498,7 +498,7 @@ except ImportError:
 class ScreenRecorder:
     def __init__(self, root):
         self.root = root
-        self.root.title("直播录制标记助手")
+        self.root.title("直播录屏标记助手")
         
         # 初始化数据库
         self.db = DatabaseManager()
@@ -722,7 +722,7 @@ class ScreenRecorder:
         title_content_frame = tk.Frame(title_frame, bg=self.card_bg)
         title_content_frame.pack(side=tk.LEFT, anchor=tk.CENTER, fill=tk.Y)
         
-        title_label = tk.Label(title_content_frame, text="直播录制标记助手", 
+        title_label = tk.Label(title_content_frame, text="直播录屏标记助手", 
                 font=('STKaiti', 18, 'bold'),
                 bg=self.card_bg, fg='#2ecc71')
         title_label.pack(side=tk.TOP, anchor=tk.W)
@@ -995,6 +995,85 @@ class ScreenRecorder:
             self.mark_badge_label.lift()  # 确保在最前面
             self.update_mark_badge()  # 更新角标内容
 
+    def update_mini_progress_bar(self):
+        """更新缩略窗口的进度条（时间轴和标记）"""
+        if not hasattr(self, 'mini_progress_canvas') or not self.mini_progress_canvas:
+            return
+        
+        canvas = self.mini_progress_canvas
+        canvas.delete('all')
+        
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width == 0 or height == 0:
+            return
+        
+        padding = 20
+        usable_width = width - 2 * padding
+        
+        # 获取当前时间和总时长
+        if self.recording:
+            current = self.current_time if self.current_time > 0 else 0
+            total = current if current > 0 else 1
+        else:
+            current = self.current_time
+            total = self.video_duration if self.video_duration > 0 else 1
+        
+        progress = current / total if total > 0 else 0
+        
+        # 绘制背景
+        canvas.create_rectangle(0, 0, width, height, fill="#2a2a2a", outline="")
+        
+        # 绘制进度条底部
+        progress_bar_y = height - 25
+        progress_bar_height = 15
+        canvas.create_rectangle(padding, progress_bar_y, width - padding, progress_bar_y + progress_bar_height, 
+                               fill="#444", outline="")
+        
+        # 绘制进度
+        progress_width = int(usable_width * progress)
+        canvas.create_rectangle(padding, progress_bar_y, padding + progress_width, progress_bar_y + progress_bar_height, 
+                               fill="#4CAF50", outline="")
+        
+        # 绘制黄色标记
+        if self.markers and total > 0:
+            for idx, marker in enumerate(self.markers):
+                marker_time = marker["time"]
+                if marker_time <= total:
+                    marker_pos = padding + (marker_time / total) * usable_width
+                    marker_pos = max(padding + 4, min(width - padding - 4, marker_pos))
+                    
+                    marker_name = marker.get("name", str(idx + 1))
+                    marker_top = progress_bar_y - 25
+                    
+                    # 葫芦形标记
+                    gourd_points = [
+                        marker_pos - 15, marker_top - 20,
+                        marker_pos - 8, marker_top - 25,
+                        marker_pos + 8, marker_top - 25,
+                        marker_pos + 15, marker_top - 20,
+                        marker_pos + 15, marker_top - 8,
+                        marker_pos + 10, marker_top - 4,
+                        marker_pos + 10, marker_top + 4,
+                        marker_pos + 5, marker_top + 8,
+                        marker_pos, marker_top + 15,
+                        marker_pos - 5, marker_top + 8,
+                        marker_pos - 10, marker_top + 4,
+                        marker_pos - 10, marker_top - 4,
+                        marker_pos - 15, marker_top - 8,
+                        marker_pos - 15, marker_top - 20,
+                    ]
+                    
+                    canvas.create_polygon(gourd_points, fill="#ffeb3b", outline="#fbc02d", width=1)
+                    canvas.create_text(marker_pos, marker_top - 8, text=marker_name, 
+                                      fill="#000000", font=('Arial', 8, 'bold'))
+        
+        # 更新mini时间标签
+        if hasattr(self, 'mini_time_label') and self.mini_time_label:
+            current_str = self.format_time(current)
+            total_str = self.format_time(total)
+            self.mini_time_label.config(text=f"{current_str} / {total_str}")
+    
     def update_mark_badge(self):
         """更新标记按钮角标（主窗口和缩略窗口）"""
         # 更新主窗口角标
@@ -1211,7 +1290,7 @@ class ScreenRecorder:
         about_card.pack(fill=tk.BOTH, expand=True, padx=20)
         
         # 软件名称
-        name_label = tk.Label(about_card, text="直播录制标记助手",
+        name_label = tk.Label(about_card, text="直播录屏标记助手",
                              font=('Arial', 16, 'bold'),
                              bg=self.card_bg, fg=self.accent_color)
         name_label.pack(pady=(0, 10))
@@ -1285,7 +1364,7 @@ class ScreenRecorder:
         
         # 版权信息
         copyright_label = tk.Label(page, 
-                                 text="© 2024 直播录制标记助手 版权所有",
+                                 text="© 2024 直播录屏标记助手 版权所有",
                                  font=('Arial', 9),
                                  bg=self.bg_color, fg=self.secondary_text,
                                  pady=20)
@@ -2879,6 +2958,9 @@ class ScreenRecorder:
         # 为旋钮添加标签并设置为置顶
         self.progress_canvas.addtag_withtag("progress_knob", knob_id)
         self.progress_canvas.tag_raise("progress_knob")
+        
+        # 同步更新缩略窗口的进度条
+        self.update_mini_progress_bar()
     
     def update_progress(self):
         while not self.stop_update:
@@ -5390,21 +5472,31 @@ class ScreenRecorder:
                 pass
         
         # 创建缩略功能区窗口 - 作为完全独立的窗口
-        self.mini_window = tk.Toplevel()  # 不指定master，使其成为独立窗口
+        self.mini_window = tk.Toplevel()
         self.mini_window.title("录屏控制")
-        self.mini_window.geometry("560x180")  # 增大窗口大小，确保能容纳所有内容
-        self.mini_window.attributes('-topmost', True)  # 始终显示在最前面
-        self.mini_window.attributes('-toolwindow', True)  # 工具窗口风格
-        self.mini_window.configure(bg="#1a1a1a")  # 直接使用颜色值，避免依赖主窗口
-        # 添加阴影效果（通过边框实现）
+        self.mini_window.geometry("560x320")
+        self.mini_window.attributes('-topmost', True)
+        self.mini_window.attributes('-toolwindow', True)
+        self.mini_window.configure(bg="#1a1a1a")
         self.mini_window.configure(relief='flat', borderwidth=0)
         
         # 固定在屏幕顶部
-        self.mini_window.geometry("560x180+50+50")
+        self.mini_window.geometry("560x320+50+50")
+        
+        # 创建进度条画布 - 同步显示时间轴和标记
+        self.mini_progress_canvas = tk.Canvas(self.mini_window, height=80, bg="#2a2a2a", 
+                                              cursor="hand1", highlightthickness=0)
+        self.mini_progress_canvas.pack(fill=tk.X, padx=20, pady=(15, 10))
+        
+        # 时间标签
+        self.mini_time_label = tk.Label(self.mini_window, text="00:00:00 / 00:00:00", 
+                                        font=('Arial', 10),
+                                        bg="#1a1a1a", fg='#aaaaaa')
+        self.mini_time_label.pack(pady=(0, 10))
         
         # 创建控制按钮
         button_frame = tk.Frame(self.mini_window, bg="#1a1a1a")
-        button_frame.pack(fill=tk.X, pady=20, padx=20)  # 增加边距
+        button_frame.pack(fill=tk.X, pady=(0, 15), padx=20)
         
         # 创建按钮
         self.mini_pause_btn = ttk.Button(button_frame, text="暂停录屏", command=self.pause_recording, width=10, takefocus=False)
@@ -5524,6 +5616,7 @@ class ScreenRecorder:
         
         # 更新角标内容（必须在窗口创建完成后调用）
         self.update_mark_badge()
+        self.update_mini_progress_bar()
         self.mini_window.lift()
         self.mini_window.focus_force()
         self.mini_window.deiconify()
