@@ -835,6 +835,53 @@ class ScreenRecorder:
         
         # 启动VIP过期检查定时任务（每5分钟检查一次）
         self.schedule_vip_check()
+        
+        # 尝试自动登录（从本地文件加载登录状态）
+        self.try_auto_login()
+    
+    def save_login_state(self, user_id):
+        """保存登录状态到本地文件"""
+        try:
+            with open("login_state.json", "w", encoding="utf-8") as f:
+                json.dump({"user_id": user_id, "saved_at": datetime.now().isoformat()}, f)
+            print(f"[登录状态] 已保存用户 {user_id} 的登录状态")
+        except Exception as e:
+            print(f"[登录状态] 保存失败: {e}")
+    
+    def clear_login_state(self):
+        """清除本地登录状态"""
+        try:
+            if os.path.exists("login_state.json"):
+                os.remove("login_state.json")
+            print("[登录状态] 已清除本地登录状态")
+        except Exception as e:
+            print(f"[登录状态] 清除失败: {e}")
+    
+    def try_auto_login(self):
+        """尝试自动登录"""
+        try:
+            if not os.path.exists("login_state.json"):
+                return
+            
+            with open("login_state.json", "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            user_id = data.get("user_id")
+            if not user_id:
+                return
+            
+            # 从数据库获取用户信息
+            user = self.db.get_user_by_id(user_id)
+            if not user:
+                self.clear_login_state()
+                return
+            
+            # 自动登录
+            self.do_login(user, is_auto_login=True)
+            print(f"[登录状态] 用户 {user_id} 自动登录成功")
+        except Exception as e:
+            print(f"[登录状态] 自动登录失败: {e}")
+            self.clear_login_state()
     
     def ensure_directories(self):
         """确保必要的目录存在"""
@@ -4983,7 +5030,7 @@ class ScreenRecorder:
             else:
                 self.show_login_tip("微信登录失败", is_success=False)
     
-    def do_login(self, user):
+    def do_login(self, user, is_auto_login=False):
         """执行登录"""
         self.is_logged_in = True
         self.current_user = {
@@ -4997,11 +5044,18 @@ class ScreenRecorder:
         
         self.user_avatar_btn.config(text="👤")
         
-        self.show_login_tip(f"登录成功，欢迎 {self.current_user['name']}", is_success=True)
+        # 保存登录状态（仅在非自动登录时保存）
+        if not is_auto_login:
+            self.save_login_state(user['id'])
+        
+        # 更新UI显示
         self.update_mark_badge()
         self.update_finish_clip_badge()
         self.update_vip_status_display()
-        self.login_dialog.after(1500, lambda: self.login_dialog.destroy())
+        
+        if not is_auto_login:
+            self.show_login_tip(f"登录成功，欢迎 {self.current_user['name']}", is_success=True)
+            self.login_dialog.after(1500, lambda: self.login_dialog.destroy())
     
     def show_user_info(self):
         """显示用户信息弹窗"""
@@ -5181,8 +5235,14 @@ class ScreenRecorder:
         self.current_user = None
         self.user_avatar_btn.config(text="👤")
         dialog.destroy()
+        
+        # 清除本地登录状态
+        self.clear_login_state()
+        
         self.show_notification("已退出登录", is_weak=True)
         self.update_mark_badge()
+        self.update_finish_clip_badge()
+        self.update_vip_status_display()
     
     def show_forgot_password_dialog(self):
         """显示忘记密码弹窗（仅支持手机号）"""
