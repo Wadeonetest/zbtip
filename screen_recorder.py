@@ -26,7 +26,7 @@ class DatabaseManager:
         self.init_database()
     
     def get_connection(self):
-        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
     
@@ -50,8 +50,10 @@ class DatabaseManager:
                 last_login_at DATETIME,
                 remaining_marks INTEGER DEFAULT 0,
                 status INTEGER DEFAULT 1,
+                inviter_id INTEGER DEFAULT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (inviter_id) REFERENCES users(id)
             )
         ''')
 
@@ -114,6 +116,14 @@ class DatabaseManager:
                 INSERT INTO config (name, value, description)
                 VALUES (?, ?, ?)
             ''', ('vip_page_title', '购买会员解锁标记进度无限次使用\n购买会员解锁截取视频无限次使用', '会员页面title文案'))
+        
+        # 邀请奖励标记进度次数字段配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'invite_reward_marks'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('invite_reward_marks', '10', '每邀请1位新用户奖励的标记进度次数'))
         
         # 法律声明链接配置
         cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'legal_notice_url'")
@@ -199,6 +209,24 @@ class DatabaseManager:
             # VIP用户设置很大的值
             vip_marks = 99999999999999999999999999999999999999
             cursor.execute("UPDATE users SET remaining_marks = ? WHERE is_vip = 1", (vip_marks,))
+        
+        # 检查并添加 inviter_id 列（数据库迁移 - 邀请人字段）
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'inviter_id' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN inviter_id INTEGER DEFAULT NULL")
+        
+        # 检查并添加 invite_reward_total 列（邀请奖励累计获得次数）
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'invite_reward_total' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN invite_reward_total INTEGER DEFAULT 0")
+        
+        # 检查并添加 invite_reward_remaining 列（邀请奖励剩余可用次数）
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'invite_reward_remaining' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN invite_reward_remaining INTEGER DEFAULT 0")
 
         conn.commit()
         conn.close()
@@ -230,28 +258,52 @@ class DatabaseManager:
             conn.close()
     
     def get_user_by_email(self, email):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
-        user = cursor.fetchone()
-        conn.close()
-        return dict(user) if user else None
+        """根据邮箱获取用户"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+            user = cursor.fetchone()
+            return dict(user) if user else None
+        except Exception as e:
+            return None
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
     
     def get_user_by_phone(self, phone):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE phone = ?', (phone,))
-        user = cursor.fetchone()
-        conn.close()
-        return dict(user) if user else None
+        """根据手机号获取用户"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE phone = ?', (phone,))
+            user = cursor.fetchone()
+            return dict(user) if user else None
+        except Exception as e:
+            return None
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
     
     def get_user_by_id(self, user_id):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
-        user = cursor.fetchone()
-        conn.close()
-        return dict(user) if user else None
+        """根据ID获取用户"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+            user = cursor.fetchone()
+            return dict(user) if user else None
+        except Exception as e:
+            return None
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
     
     def verify_password(self, email_or_phone, password):
         user = self.get_user_by_email(email_or_phone) or self.get_user_by_phone(email_or_phone)
@@ -260,16 +312,24 @@ class DatabaseManager:
         return None
     
     def update_last_login(self, user_id):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        now = self.get_beijing_time()
-        cursor.execute('''
-            UPDATE users
-            SET last_login_at = ?, updated_at = ?
-            WHERE id = ?
-        ''', (now, now, user_id))
-        conn.commit()
-        conn.close()
+        """更新用户最后登录时间"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            now = self.get_beijing_time()
+            cursor.execute('''
+                UPDATE users
+                SET last_login_at = ?, updated_at = ?
+                WHERE id = ?
+            ''', (now, now, user_id))
+            conn.commit()
+        except Exception as e:
+            pass
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
     
     def purchase_vip(self, user_id, vip_type, vip_name, duration_days, amount):
         conn = self.get_connection()
@@ -333,6 +393,43 @@ class DatabaseManager:
             'is_vip': bool(user['is_vip']),
             'vip_expire_at': user['vip_expire_at']
         }
+    
+    def submit_invite_code(self, user_id, inviter_id, reward):
+        """提交邀请码，更新邀请关系并发放奖励"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            conn.execute('BEGIN TRANSACTION')
+            
+            # 更新被邀请人的inviter_id
+            cursor.execute('''
+                UPDATE users
+                SET inviter_id = ?, updated_at = ?
+                WHERE id = ? AND inviter_id IS NULL
+            ''', (inviter_id, self.get_beijing_time(), user_id))
+            
+            # 检查是否成功更新（防止重复提交）
+            if cursor.rowcount == 0:
+                conn.rollback()
+                conn.close()
+                return False
+            
+            # 更新邀请人的奖励累计和剩余次数
+            cursor.execute('''
+                UPDATE users
+                SET invite_reward_total = invite_reward_total + ?,
+                    invite_reward_remaining = invite_reward_remaining + ?,
+                    updated_at = ?
+                WHERE id = ?
+            ''', (reward, reward, self.get_beijing_time(), inviter_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            return False
     
     def get_user_vip_purchases(self, user_id):
         conn = self.get_connection()
@@ -431,33 +528,59 @@ class DatabaseManager:
         conn.close()
     
     def decrement_remaining_marks(self, user_id):
-        """减少用户剩余标记次数（返回新的剩余次数）"""
+        """减少用户剩余标记次数（优先扣普通次数，再扣邀请奖励次数），返回新的总剩余次数"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT remaining_marks FROM users WHERE id = ?', (user_id,))
+        cursor.execute('SELECT remaining_marks, invite_reward_remaining FROM users WHERE id = ?', (user_id,))
         result = cursor.fetchone()
-        if result and result['remaining_marks'] > 0:
-            new_marks = result['remaining_marks'] - 1
-            now = self.get_beijing_time()
+        
+        if not result:
+            conn.close()
+            return 0
+        
+        remaining_marks = result['remaining_marks'] or 0
+        invite_reward_remaining = result['invite_reward_remaining'] or 0
+        total_remaining = remaining_marks + invite_reward_remaining
+        
+        if total_remaining <= 0:
+            conn.close()
+            return 0
+        
+        now = self.get_beijing_time()
+        
+        # 优先扣除普通次数
+        if remaining_marks > 0:
+            new_remaining = remaining_marks - 1
             cursor.execute('''
                 UPDATE users
                 SET remaining_marks = ?, updated_at = ?
                 WHERE id = ?
-            ''', (new_marks, now, user_id))
-            conn.commit()
-            conn.close()
-            return new_marks
+            ''', (new_remaining, now, user_id))
+        else:
+            # 扣除邀请奖励次数
+            new_invite = invite_reward_remaining - 1
+            cursor.execute('''
+                UPDATE users
+                SET invite_reward_remaining = ?, updated_at = ?
+                WHERE id = ?
+            ''', (new_invite, now, user_id))
+        
+        conn.commit()
         conn.close()
-        return 0
+        return total_remaining - 1
     
     def get_remaining_marks(self, user_id):
-        """获取用户剩余标记次数"""
+        """获取用户剩余标记次数（普通次数 + 邀请奖励次数）"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT remaining_marks FROM users WHERE id = ?', (user_id,))
+        cursor.execute('SELECT remaining_marks, invite_reward_remaining FROM users WHERE id = ?', (user_id,))
         result = cursor.fetchone()
         conn.close()
-        return result['remaining_marks'] if result else 0
+        
+        if not result:
+            return 0
+        
+        return (result['remaining_marks'] or 0) + (result['invite_reward_remaining'] or 0)
 
 # 尝试导入imageio_ffmpeg用于快速视频裁剪
 try:
@@ -874,91 +997,108 @@ class ScreenRecorder:
         """创建会员tab"""
         page = self.tab_pages['vip']
         
+        # 主容器 - 左右两栏布局
+        main_container = tk.Frame(page, bg=self.bg_color)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # 左侧：会员商品区域
+        left_frame = tk.Frame(main_container, bg=self.bg_color)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        left_frame.pack_propagate(True)
+        
         # 标题
-        title = tk.Label(page, text="💎 会员中心",
+        title = tk.Label(left_frame, text="💎 会员中心",
                         font=('Arial', 18, 'bold'),
                         bg=self.bg_color, fg=self.accent_color)
-        title.pack(anchor=tk.W, pady=(20, 5), padx=20)
+        title.pack(anchor=tk.W, pady=(0, 15))
         
         # 会员状态大卡片
-        self.vip_big_status_card = tk.Frame(page, bg=self.accent_color, padx=30, pady=25)
-        self.vip_big_status_card.pack(fill=tk.X, padx=20, pady=(0, 15))
+        self.vip_big_status_card = tk.Frame(left_frame, bg=self.accent_color, padx=25, pady=20)
+        self.vip_big_status_card.pack(fill=tk.X, pady=(0, 15))
         
         self.vip_big_status_label = tk.Label(self.vip_big_status_card, text="",
-                                            font=('Arial', 20, 'bold'),
+                                            font=('Arial', 16, 'bold'),
                                             bg=self.accent_color, fg="#ffffff")
         self.vip_big_status_label.pack(side=tk.LEFT)
         
         self.vip_big_expire_label = tk.Label(self.vip_big_status_card, text="",
-                                          font=('Arial', 14),
+                                          font=('Arial', 12),
                                           bg=self.accent_color, fg="#ffffff")
         self.vip_big_expire_label.pack(side=tk.RIGHT)
         
         # 会员页面title文案（艺术字样式）
-        vip_title_frame = tk.Frame(page, bg=self.bg_color)
-        vip_title_frame.pack(anchor=tk.W, pady=(0, 20), padx=20)
+        vip_title_frame = tk.Frame(left_frame, bg=self.bg_color)
+        vip_title_frame.pack(anchor=tk.W, pady=(0, 15))
         
         line1_frame = tk.Frame(vip_title_frame, bg=self.bg_color)
         line1_frame.pack(anchor=tk.W)
-        tk.Label(line1_frame, text="购买会员解锁", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
-        tk.Label(line1_frame, text="标记进度", font=('STKaiti', 14, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
-        tk.Label(line1_frame, text="功能无限次使用", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(line1_frame, text="购买会员解锁", font=('STKaiti', 12), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(line1_frame, text="标记进度", font=('STKaiti', 12, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
+        tk.Label(line1_frame, text="功能无限次使用", font=('STKaiti', 12), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
         
         line2_frame = tk.Frame(vip_title_frame, bg=self.bg_color)
         line2_frame.pack(anchor=tk.W)
-        tk.Label(line2_frame, text="购买会员解锁", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
-        tk.Label(line2_frame, text="截取视频", font=('STKaiti', 14, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
-        tk.Label(line2_frame, text="功能无限次使用", font=('STKaiti', 14), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(line2_frame, text="购买会员解锁", font=('STKaiti', 12), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(line2_frame, text="截取视频", font=('STKaiti', 12, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
+        tk.Label(line2_frame, text="功能无限次使用", font=('STKaiti', 12), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
         
         # 用户VIP状态卡片
-        self.vip_status_card = tk.Frame(page, bg=self.card_bg, padx=20, pady=15)
-        self.vip_status_card.pack(fill=tk.X, padx=20, pady=(0, 20))
+        self.vip_status_card = tk.Frame(left_frame, bg=self.card_bg, padx=15, pady=12)
+        self.vip_status_card.pack(fill=tk.X, pady=(0, 15))
         
         self.vip_status_label = tk.Label(self.vip_status_card, text="正在加载...",
-                                        font=('Arial', 12),
+                                        font=('Arial', 11),
                                         bg=self.card_bg, fg=self.text_color)
         self.vip_status_label.pack(side=tk.LEFT)
         
         self.vip_days_label = tk.Label(self.vip_status_card, text="",
-                                        font=('Arial', 11),
+                                        font=('Arial', 10),
                                         bg=self.card_bg, fg=self.secondary_text)
-        self.vip_days_label.pack(side=tk.LEFT, padx=20)
+        self.vip_days_label.pack(side=tk.RIGHT)
         
-        # 会员商品卡片容器
-        products_frame = tk.Frame(page, bg=self.bg_color)
-        products_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        # 会员商品卡片容器 - 纵向排列
+        products_frame = tk.Frame(left_frame, bg=self.bg_color)
+        products_frame.pack(fill=tk.X)
         
         # 从数据库读取商品
         products = self.db.get_vip_products()
         self.vip_product_cards = []
         
         for prod in products:
-            # 外层容器
+            # 外层容器 - 纵向排列
             container = tk.Frame(products_frame, bg=self.bg_color)
-            container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+            container.pack(fill=tk.X, pady=(0, 12))
             
             # Canvas用于绘制圆角边框
-            canvas = tk.Canvas(container, bg=self.bg_color, highlightthickness=0)
-            canvas.pack(fill=tk.BOTH, expand=True)
+            canvas = tk.Canvas(container, bg=self.bg_color, highlightthickness=0, height=100)
+            canvas.pack(fill=tk.X)
             
             # 内部内容Frame
             inner_frame = tk.Frame(canvas, bg=self.card_bg)
             inner_frame.place(relx=0.03, rely=0.03, relwidth=0.94, relheight=0.94)
             
-            tk.Label(inner_frame, text=prod['name'], font=('Arial', 14, 'bold'),
-                    bg=self.card_bg, fg=self.accent_color).pack()
+            # 商品信息区域 - 左侧
+            info_frame = tk.Frame(inner_frame, bg=self.card_bg)
+            info_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=15, pady=10)
             
-            tk.Label(inner_frame, text=f"¥{prod['price']}", font=('Arial', 20, 'bold'),
-                    bg=self.card_bg, fg=self.text_color).pack(pady=10)
+            tk.Label(info_frame, text=prod['name'], font=('Arial', 12, 'bold'),
+                    bg=self.card_bg, fg=self.accent_color).pack(anchor=tk.W)
             
-            tk.Label(inner_frame, text=prod['description'], font=('Arial', 9),
-                    bg=self.card_bg, fg=self.secondary_text).pack()
+            tk.Label(info_frame, text=f"¥{prod['price']}", font=('Arial', 16, 'bold'),
+                    bg=self.card_bg, fg=self.text_color).pack(anchor=tk.W, pady=(3, 2))
             
-            tk.Button(inner_frame, text="立即购买",
+            tk.Label(info_frame, text=prod['description'], font=('Arial', 9),
+                    bg=self.card_bg, fg=self.secondary_text).pack(anchor=tk.W)
+            
+            # 购买按钮区域 - 右侧
+            btn_frame = tk.Frame(inner_frame, bg=self.card_bg)
+            btn_frame.pack(side=tk.RIGHT, padx=15, pady=10)
+            
+            tk.Button(btn_frame, text="立即购买",
                      command=lambda p=prod: self.buy_vip(p),
                      bg=self.accent_color, fg='#ffffff',
                      font=('Arial', 10, 'bold'),
-                     relief='flat', padx=20, pady=8, cursor='hand2').pack()
+                     relief='flat', padx=14, pady=5, cursor='hand2').pack()
             
             # 绘制圆角边框
             def draw_rounded_bg(event=None, c=canvas):
@@ -966,8 +1106,8 @@ class ScreenRecorder:
                 w = c.winfo_width()
                 h = c.winfo_height()
                 if w > 0 and h > 0:
-                    r = 15
-                    bw = 3  # 边框宽度
+                    r = 12
+                    bw = 2  # 边框宽度
                     # 绘制圆角边框
                     c.create_arc(bw, bw, r*2-bw, r*2-bw, start=90, extent=90, fill='', outline=self.accent_color, width=bw, tags='rounded')
                     c.create_arc(w-r*2+bw, bw, w-bw, r*2-bw, start=0, extent=90, fill='', outline=self.accent_color, width=bw, tags='rounded')
@@ -984,7 +1124,126 @@ class ScreenRecorder:
             draw_rounded_bg()
             self.vip_product_cards.append(container)
         
-        # 更新VIP状态显示
+        # 分割线（带花边效果）
+        divider_canvas = tk.Canvas(main_container, bg=self.bg_color, width=25, highlightthickness=0)
+        divider_canvas.pack(side=tk.LEFT, fill=tk.Y, padx=(5, 5))
+        
+        def draw_divider(event=None):
+            divider_canvas.delete('all')
+            h = divider_canvas.winfo_height()
+            if h > 0:
+                # 中心绿色主分割线
+                divider_canvas.create_line(12, 0, 12, h, fill=self.accent_color, width=3)
+                # 两侧装饰线
+                divider_canvas.create_line(6, 0, 6, h, fill="#333333", width=1)
+                divider_canvas.create_line(18, 0, 18, h, fill="#333333", width=1)
+                # 花朵装饰
+                for y in range(15, h, 30):
+                    # 花瓣
+                    for i in range(6):
+                        angle = i * 60
+                        px = 12 + 5 * math.cos(math.radians(angle))
+                        py = y + 5 * math.sin(math.radians(angle))
+                        divider_canvas.create_oval(px-3, py-3, px+3, py+3, fill=self.accent_color, outline="")
+                    # 花心
+                    divider_canvas.create_oval(10, y-2, 14, y+2, fill="#FFD700", outline="")
+        
+        import math
+        divider_canvas.bind('<Configure>', draw_divider)
+        divider_canvas.update_idletasks()
+        draw_divider()
+        
+        # 右侧：邀请模块区域
+        right_frame = tk.Frame(main_container, bg=self.bg_color)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        right_frame.pack_propagate(True)
+        
+        # 邀请模块标题
+        invite_title = tk.Label(right_frame, text="🎁 邀请奖励中心",
+                                font=('Arial', 16, 'bold'),
+                                bg=self.bg_color, fg=self.accent_color)
+        invite_title.pack(anchor=tk.W, pady=(0, 20))
+        
+        # 邀请码显示区域
+        invite_code_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=15)
+        invite_code_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        tk.Label(invite_code_frame, text="您的邀请码：",
+                font=('Arial', 11), bg=self.card_bg, fg=self.secondary_text).pack(anchor=tk.W)
+        
+        code_row = tk.Frame(invite_code_frame, bg=self.card_bg)
+        code_row.pack(anchor=tk.W, pady=(5, 0))
+        
+        self.invite_code_label = tk.Label(code_row, text="请登录查看",
+                                        font=('Arial', 14, 'bold'),
+                                        bg=self.card_bg, fg=self.accent_color)
+        self.invite_code_label.pack(side=tk.LEFT)
+        
+        self.copy_invite_btn = tk.Button(code_row, text="复制",
+                                        command=self.copy_invite_code,
+                                        bg=self.accent_color, fg='#ffffff',
+                                        font=('Arial', 10, 'bold'),
+                                        relief='flat', padx=10, pady=2, cursor='hand2')
+        self.copy_invite_btn.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # 统计信息区域
+        stats_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
+        stats_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        self.invite_total_label = tk.Label(stats_frame, text="📊 累计获得：0次",
+                                            font=('Arial', 11),
+                                            bg=self.card_bg, fg=self.text_color)
+        self.invite_total_label.pack(anchor=tk.W)
+        
+        self.invite_remaining_label = tk.Label(stats_frame, text="📉 剩余可用：0次",
+                                                font=('Arial', 11),
+                                                bg=self.card_bg, fg=self.text_color)
+        self.invite_remaining_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        # 活动玩法说明
+        rules_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
+        rules_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        tk.Label(rules_frame, text="🎯 活动玩法",
+                font=('Arial', 12, 'bold'),
+                bg=self.card_bg, fg=self.accent_color).pack(anchor=tk.W)
+        
+        reward_marks = int(self.db.get_config('invite_reward_marks') or '10')
+        
+        # 活动玩法说明（数字放大绿色）
+        rules_line1 = tk.Frame(rules_frame, bg=self.card_bg)
+        rules_line1.pack(anchor=tk.W, pady=(5, 0))
+        tk.Label(rules_line1, text="每成功邀请",
+                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(rules_line1, text="1",
+                font=('Arial', 14, 'bold'), bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+        tk.Label(rules_line1, text="位新用户注册，",
+                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+        
+        rules_line2 = tk.Frame(rules_frame, bg=self.card_bg)
+        rules_line2.pack(anchor=tk.W)
+        tk.Label(rules_line2, text="可获得",
+                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+        tk.Label(rules_line2, text=f"{reward_marks}",
+                font=('Arial', 14, 'bold'), bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+        tk.Label(rules_line2, text="次标记进度功能使用权",
+                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+        
+        # 邀请流程说明
+        process_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
+        process_frame.pack(fill=tk.X)
+        
+        tk.Label(process_frame, text="📋 邀请流程",
+                font=('Arial', 12, 'bold'),
+                bg=self.card_bg, fg=self.accent_color).pack(anchor=tk.W)
+        
+        process_text = "用户在右上角用户信息弹窗内\n填写「您的邀请码」即算成功邀请"
+        tk.Label(process_frame, text=process_text,
+                font=('Arial', 10),
+                bg=self.card_bg, fg=self.secondary_text,
+                justify=tk.LEFT).pack(anchor=tk.W, pady=(5, 0))
+        
+        # 更新VIP状态显示（包括邀请模块）
         self.update_vip_status_display()
 
     def show_mark_badge(self):
@@ -1132,6 +1391,9 @@ class ScreenRecorder:
                 self.vip_big_status_card.config(bg="#666666")
                 self.vip_big_status_label.config(text="请先登录", bg="#666666")
                 self.vip_big_expire_label.config(text="", bg="#666666")
+            
+            # 更新邀请模块
+            self.update_invite_display()
         else:
             vip_status = self.db.get_user_vip_status(self.current_user['id'])
             if vip_status['is_vip']:
@@ -1160,6 +1422,44 @@ class ScreenRecorder:
                     self.vip_big_status_card.config(bg="#e74c3c")
                     self.vip_big_status_label.config(text="📦 普通用户", bg="#e74c3c")
                     self.vip_big_expire_label.config(text="开通会员享受更多功能", bg="#e74c3c")
+            
+            # 更新邀请模块
+            self.update_invite_display()
+    
+    def update_invite_display(self):
+        """更新邀请模块显示"""
+        if not hasattr(self, 'invite_code_label'):
+            return
+            
+        if not self.is_logged_in:
+            self.invite_code_label.config(text="请登录查看")
+            self.invite_total_label.config(text="📊 累计获得：0次")
+            self.invite_remaining_label.config(text="📉 剩余可用：0次")
+        else:
+            # 显示邀请码（用户ID）
+            self.invite_code_label.config(text=str(self.current_user['id']))
+            
+            # 获取邀请奖励统计
+            user_info = self.db.get_user_by_id(self.current_user['id'])
+            total = user_info.get('invite_reward_total', 0)
+            remaining = user_info.get('invite_reward_remaining', 0)
+            self.invite_total_label.config(text=f"📊 累计获得：{total}次")
+            self.invite_remaining_label.config(text=f"📉 剩余可用：{remaining}次")
+    
+    def copy_invite_code(self):
+        """复制邀请码到剪贴板"""
+        if not self.is_logged_in:
+            self.show_notification("请先登录", is_weak=True)
+            return
+            
+        invite_code = str(self.current_user['id'])
+        try:
+            import pyperclip
+            pyperclip.copy(invite_code)
+            self.show_notification("已成功复制邀请码", is_weak=True)
+        except Exception as e:
+            # 备用方案
+            self.show_notification("复制失败，请手动复制", is_weak=True)
 
     def buy_vip(self, product):
         """购买VIP"""
@@ -1499,6 +1799,11 @@ class ScreenRecorder:
 
     def switch_tab(self, tab_id):
         """切换tab"""
+        # 会员tab需要登录
+        if tab_id == 'vip' and not self.is_logged_in:
+            self.show_login_dialog()
+            return
+        
         self.current_tab = tab_id
         self.highlight_nav(tab_id)
         self.show_tab(tab_id)
@@ -1508,6 +1813,10 @@ class ScreenRecorder:
         for tid, page in self.tab_pages.items():
             if tid == tab_id:
                 page.pack(fill=tk.BOTH, expand=True)
+                # 每次打开会员tab时从数据库读取最新数据
+                if tid == 'vip':
+                    self.update_vip_status_display()
+                    self.update_invite_display()
             else:
                 page.pack_forget()
 
@@ -4514,7 +4823,7 @@ class ScreenRecorder:
         """显示用户信息弹窗"""
         user_dialog = tk.Toplevel(self.root)
         user_dialog.title("用户信息")
-        user_dialog.geometry("350x400")
+        user_dialog.geometry("350x480")
         user_dialog.resizable(False, False)
         user_dialog.attributes('-topmost', True)
         user_dialog.configure(bg="#252525")
@@ -4522,8 +4831,8 @@ class ScreenRecorder:
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - 350) // 2
-        y = (screen_height - 400) // 2
-        user_dialog.geometry(f"350x400+{x}+{y}")
+        y = (screen_height - 480) // 2
+        user_dialog.geometry(f"350x480+{x}+{y}")
         
         avatar_frame = tk.Frame(user_dialog, bg="#4CAF50", padx=50, pady=20)
         avatar_frame.pack(fill=tk.X)
@@ -4537,7 +4846,11 @@ class ScreenRecorder:
         
         name_label = tk.Label(info_frame, text=f"用户名: {self.current_user['name']}", 
                               bg="#252525", fg="#ffffff", font=('Arial', 11))
-        name_label.pack(anchor=tk.W, pady=(0, 10))
+        name_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        id_label = tk.Label(info_frame, text=f"用户ID: {self.current_user['id']}", 
+                            bg="#252525", fg="#888888", font=('Arial', 10))
+        id_label.pack(anchor=tk.W, pady=(0, 10))
         
         type_label = tk.Label(info_frame, text=f"登录方式: {self.get_login_type_text()}", 
                               bg="#252525", fg="#ffffff", font=('Arial', 11))
@@ -4548,7 +4861,86 @@ class ScreenRecorder:
         vip_label = tk.Label(info_frame, text=f"会员状态: {vip_text}", 
                             bg="#252525", fg="#4CAF50" if vip_status['is_vip'] else "#b0b0b0", 
                             font=('Arial', 11))
-        vip_label.pack(anchor=tk.W, pady=(0, 15))
+        vip_label.pack(anchor=tk.W, pady=(0, 10))
+        
+        # 邀请码填写区域
+        invite_frame = tk.Frame(info_frame, bg="#252525")
+        invite_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        invite_title = tk.Label(invite_frame, text="您的邀请码", 
+                               bg="#252525", fg="#b0b0b0", font=('Arial', 10))
+        invite_title.pack(anchor=tk.W, pady=(0, 5))
+        
+        # 获取用户信息
+        user_info = self.db.get_user_by_id(self.current_user['id'])
+        inviter_id = user_info.get('inviter_id')
+        created_at = user_info.get('created_at', '')
+        
+        # 判断是否可以填写邀请码
+        can_edit_invite = False
+        if inviter_id is None and created_at:
+            from datetime import datetime, timedelta
+            try:
+                register_time = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                current_time = datetime.now() + timedelta(hours=8)  # 北京时区
+                diff_hours = (current_time - register_time).total_seconds() / 3600
+                can_edit_invite = diff_hours < 24
+            except:
+                pass
+        
+        if inviter_id is not None:
+            # 已填写过邀请码，仅展示
+            tk.Label(invite_frame, text=f"已填写: {inviter_id}", 
+                     bg="#252525", fg="#4CAF50", font=('Arial', 11)).pack(anchor=tk.W)
+        elif can_edit_invite:
+            # 可以填写邀请码
+            invite_entry = tk.Entry(invite_frame, bg="#333333", fg="#ffffff", 
+                                   font=('Arial', 11), relief='flat', width=20)
+            invite_entry.pack(anchor=tk.W, pady=(0, 8))
+            
+            # 错误提示标签
+            error_label = tk.Label(invite_frame, text="", 
+                                  bg="#252525", fg="#f44336", font=('Arial', 9))
+            error_label.pack(anchor=tk.W)
+            
+            def submit_invite_code():
+                invite_code = invite_entry.get().strip()
+                if not invite_code:
+                    error_label.config(text="请输入邀请码")
+                    return
+                
+                # 验证邀请码是否存在
+                inviter = self.db.get_user_by_id(int(invite_code)) if invite_code.isdigit() else None
+                if not inviter:
+                    error_label.config(text="邀请码不存在")
+                    return
+                
+                # 检查是否自邀请
+                if int(invite_code) == self.current_user['id']:
+                    error_label.config(text="不能填写自己的邀请码")
+                    return
+                
+                # 执行邀请逻辑
+                reward = int(self.db.get_config('invite_reward_marks') or '10')
+                success = self.db.submit_invite_code(self.current_user['id'], int(invite_code), reward)
+                
+                if success:
+                    error_label.config(text="邀请码填写成功！", fg="#4CAF50")
+                    invite_entry.config(state=tk.DISABLED)
+                    submit_btn.config(state=tk.DISABLED)
+                    # 更新邀请模块显示
+                    self.update_invite_display()
+                else:
+                    error_label.config(text="操作失败，请重试")
+            
+            submit_btn = tk.Button(invite_frame, text="确认", command=submit_invite_code,
+                                   bg="#4CAF50", fg="#ffffff", font=('Arial', 10, 'bold'),
+                                   relief='flat', padx=10, pady=3)
+            submit_btn.pack(anchor=tk.W)
+        else:
+            # 超过24小时，不可填写
+            tk.Label(invite_frame, text="超过24小时，无法填写邀请码", 
+                     bg="#252525", fg="#666666", font=('Arial', 10)).pack(anchor=tk.W)
         
         logout_btn = tk.Button(info_frame, text="退出登录", command=lambda: self.do_logout(user_dialog),
                                bg="#f44336", fg="#ffffff", font=('Arial', 11, 'bold'),
