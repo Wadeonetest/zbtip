@@ -437,6 +437,9 @@ class DatabaseManager:
             self._update_user_vip_status(cursor, user_id)
             conn.commit()
             print(f"[VIP状态刷新] 用户 {user_id} VIP状态已更新")
+            self.update_vip_status_display()
+            self.update_mark_badge()
+            self.update_finish_clip_badge()
         except Exception as e:
             print(f"[VIP状态刷新] 错误: {e}")
             conn.rollback()
