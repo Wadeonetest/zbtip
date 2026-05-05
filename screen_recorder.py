@@ -125,6 +125,30 @@ class DatabaseManager:
                 VALUES (?, ?, ?)
             ''', ('invite_reward_marks', '10', '每邀请1位新用户奖励的标记进度次数'))
         
+        # 邀请奖励类型配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'invite_reward_type'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('invite_reward_type', 'vip', '邀请奖励类型: vip(会员权益) / marks(标记次数)'))
+        
+        # 邀请奖励VIP天数配置
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'invite_reward_vip_days'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('invite_reward_vip_days', '1', '邀请奖励VIP天数'))
+        
+        # 活动玩法文案配置（VIP版本）
+        cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'invite_activity_rules'")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO config (name, value, description)
+                VALUES (?, ?, ?)
+            ''', ('invite_activity_rules', '每成功邀请1位新用户注册，\n可获得{days}天VIP会员权益', '邀请活动玩法文案'))
+        
         # 法律声明链接配置
         cursor.execute("SELECT COUNT(*) FROM config WHERE name = 'legal_notice_url'")
         if cursor.fetchone()[0] == 0:
@@ -207,7 +231,7 @@ class DatabaseManager:
             default_marks = 2
             cursor.execute("UPDATE users SET remaining_marks = ? WHERE is_vip = 0", (default_marks,))
             # VIP用户设置很大的值
-            vip_marks = 99999999999999999999999999999999999999
+            vip_marks = 999999999999999999
             cursor.execute("UPDATE users SET remaining_marks = ? WHERE is_vip = 1", (vip_marks,))
         
         # 检查并添加 inviter_id 列（数据库迁移 - 邀请人字段）
@@ -349,7 +373,7 @@ class DatabaseManager:
 
         self._update_user_vip_status(cursor, user_id)
         
-        vip_marks = 99999999999999999999999999999999999999
+        vip_marks = 999999999999999999
         now = self.get_beijing_time()
         cursor.execute('''
             UPDATE users
@@ -394,8 +418,9 @@ class DatabaseManager:
             'vip_expire_at': user['vip_expire_at']
         }
     
-    def submit_invite_code(self, user_id, inviter_id, reward):
+    def submit_invite_code(self, user_id, inviter_id, reward_type='marks', reward_value=10):
         """提交邀请码，更新邀请关系并发放奖励"""
+        print(f"[邀请奖励] 开始处理: user_id={user_id}, inviter_id={inviter_id}, reward_type={reward_type}, reward_value={reward_value}")
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -410,23 +435,88 @@ class DatabaseManager:
             
             # 检查是否成功更新（防止重复提交）
             if cursor.rowcount == 0:
+                print(f"[邀请奖励] 失败: cursor.rowcount=0 (user_id={user_id} 可能已有inviter)")
                 conn.rollback()
                 conn.close()
                 return False
             
-            # 更新邀请人的奖励累计和剩余次数
-            cursor.execute('''
-                UPDATE users
-                SET invite_reward_total = invite_reward_total + ?,
-                    invite_reward_remaining = invite_reward_remaining + ?,
-                    updated_at = ?
-                WHERE id = ?
-            ''', (reward, reward, self.get_beijing_time(), inviter_id))
+            print(f"[邀请奖励] 被邀请人inviter_id更新成功")
+            
+            # 根据奖励类型执行不同的奖励发放逻辑
+            if reward_type == 'vip':
+                # VIP天数奖励：为邀请人添加VIP天数
+                vip_days = reward_value
+                print(f"[邀请奖励] VIP奖励: vip_days={vip_days}")
+                
+                # 获取邀请人当前VIP过期时间
+                cursor.execute('''
+                    SELECT vip_expire_at FROM users WHERE id = ?
+                ''', (inviter_id,))
+                result = cursor.fetchone()
+                current_expire = result['vip_expire_at'] if result else None
+                print(f"[邀请奖励] 邀请人当前VIP过期时间: {current_expire}")
+                
+                # 计算新的过期时间
+                now = datetime.strptime(self.get_beijing_time(), '%Y-%m-%d %H:%M:%S')
+                if current_expire and current_expire > self.get_beijing_time():
+                    # 如果已有VIP且未过期，延长有效期
+                    expire_time = datetime.strptime(current_expire, '%Y-%m-%d %H:%M:%S') + timedelta(days=vip_days)
+                    print(f"[邀请奖励] 延长现有VIP: 原有过期时间={current_expire}")
+                else:
+                    # 否则从现在开始计算
+                    expire_time = now + timedelta(days=vip_days)
+                    print(f"[邀请奖励] 新VIP: 从当前时间开始计算")
+                
+                new_expire = expire_time.strftime('%Y-%m-%d %H:%M:%S')
+                print(f"[邀请奖励] 新VIP过期时间: {new_expire}")
+                
+                # 更新邀请人的VIP状态
+                cursor.execute('''
+                    UPDATE users
+                    SET is_vip = 1,
+                        vip_expire_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                ''', (new_expire, self.get_beijing_time(), inviter_id))
+                print(f"[邀请奖励] 更新邀请人VIP状态完成")
+                
+                # 创建VIP购买记录（标记为邀请奖励）
+                purchase_id = str(uuid.uuid4())
+                order_no = f"VIP_INVITE_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                start_at = self.get_beijing_time()
+                
+                cursor.execute('''
+                    INSERT INTO vip_purchases
+                    (id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (purchase_id, inviter_id, 'invite', f'邀请奖励-{vip_days}天VIP', vip_days, start_at, new_expire, order_no, 0.0, 1, start_at))
+                print(f"[邀请奖励] 创建VIP购买记录完成: order_no={order_no}")
+                
+                # 设置remaining_marks为极大值（VIP用户无限次标记）
+                vip_marks = 999999999999999999
+                cursor.execute('''
+                    UPDATE users SET remaining_marks = ?, updated_at = ? WHERE id = ?
+                ''', (vip_marks, self.get_beijing_time(), inviter_id))
+                print(f"[邀请奖励] 设置remaining_marks完成")
+            else:
+                # 标记次数奖励（默认）
+                print(f"[邀请奖励] 标记次数奖励: reward_value={reward_value}")
+                cursor.execute('''
+                    UPDATE users
+                    SET invite_reward_total = invite_reward_total + ?,
+                        invite_reward_remaining = invite_reward_remaining + ?,
+                        updated_at = ?
+                    WHERE id = ?
+                ''', (reward_value, reward_value, self.get_beijing_time(), inviter_id))
             
             conn.commit()
+            print(f"[邀请奖励] 事务提交成功")
             conn.close()
             return True
         except Exception as e:
+            print(f"[邀请奖励] 异常: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             conn.rollback()
             conn.close()
             return False
@@ -1188,52 +1278,9 @@ class ScreenRecorder:
                                         relief='flat', padx=10, pady=2, cursor='hand2')
         self.copy_invite_btn.pack(side=tk.LEFT, padx=(10, 0))
         
-        # 统计信息区域
-        stats_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
-        stats_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        self.invite_total_label = tk.Label(stats_frame, text="📊 累计获得：0次",
-                                            font=('Arial', 11),
-                                            bg=self.card_bg, fg=self.text_color)
-        self.invite_total_label.pack(anchor=tk.W)
-        
-        self.invite_remaining_label = tk.Label(stats_frame, text="📉 剩余可用：0次",
-                                                font=('Arial', 11),
-                                                bg=self.card_bg, fg=self.text_color)
-        self.invite_remaining_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        # 活动玩法说明
-        rules_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
-        rules_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        tk.Label(rules_frame, text="🎯 活动玩法",
-                font=('Arial', 12, 'bold'),
-                bg=self.card_bg, fg=self.accent_color).pack(anchor=tk.W)
-        
-        reward_marks = int(self.db.get_config('invite_reward_marks') or '10')
-        
-        # 活动玩法说明（数字放大绿色）
-        rules_line1 = tk.Frame(rules_frame, bg=self.card_bg)
-        rules_line1.pack(anchor=tk.W, pady=(5, 0))
-        tk.Label(rules_line1, text="每成功邀请",
-                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
-        tk.Label(rules_line1, text="1",
-                font=('Arial', 14, 'bold'), bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
-        tk.Label(rules_line1, text="位新用户注册，",
-                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
-        
-        rules_line2 = tk.Frame(rules_frame, bg=self.card_bg)
-        rules_line2.pack(anchor=tk.W)
-        tk.Label(rules_line2, text="可获得",
-                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
-        tk.Label(rules_line2, text=f"{reward_marks}",
-                font=('Arial', 14, 'bold'), bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
-        tk.Label(rules_line2, text="次标记进度功能使用权",
-                font=('Arial', 10), bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
-        
-        # 邀请流程说明
+        # 邀请流程说明（放在活动玩法前面）
         process_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
-        process_frame.pack(fill=tk.X)
+        process_frame.pack(fill=tk.X, pady=(0, 15))
         
         tk.Label(process_frame, text="📋 邀请流程",
                 font=('Arial', 12, 'bold'),
@@ -1244,6 +1291,85 @@ class ScreenRecorder:
                 font=('Arial', 10),
                 bg=self.card_bg, fg=self.secondary_text,
                 justify=tk.LEFT).pack(anchor=tk.W, pady=(5, 0))
+        
+        # 活动玩法说明（读取配置）
+        rules_frame = tk.Frame(right_frame, bg=self.card_bg, padx=15, pady=12)
+        rules_frame.pack(fill=tk.X)
+        
+        tk.Label(rules_frame, text="🎯 活动玩法",
+                font=('Arial', 12, 'bold'),
+                bg=self.card_bg, fg=self.accent_color).pack(anchor=tk.W)
+        
+        # 根据奖励类型获取活动文案
+        reward_type = self.db.get_config('invite_reward_type') or 'marks'
+        if reward_type == 'vip':
+            reward_days = int(self.db.get_config('invite_reward_vip_days') or '1')
+            
+            # 第一行：每成功邀请1位新用户注册
+            line1_frame = tk.Frame(rules_frame, bg=self.card_bg)
+            line1_frame.pack(anchor=tk.W, pady=(8, 0))
+            
+            tk.Label(line1_frame, text="每成功邀请",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+            
+            tk.Label(line1_frame, text="1",
+                    font=('Arial', 14, 'bold'),
+                    bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+            
+            tk.Label(line1_frame, text="位新用户注册",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+            
+            # 第二行：可获得1天VIP会员权益
+            line2_frame = tk.Frame(rules_frame, bg=self.card_bg)
+            line2_frame.pack(anchor=tk.W, pady=(3, 0))
+            
+            tk.Label(line2_frame, text="可获得",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+            
+            tk.Label(line2_frame, text=str(reward_days),
+                    font=('Arial', 14, 'bold'),
+                    bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+            
+            tk.Label(line2_frame, text="天VIP会员权益",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+        else:
+            reward_marks = int(self.db.get_config('invite_reward_marks') or '10')
+            
+            # 第一行：每成功邀请1位新用户注册
+            line1_frame = tk.Frame(rules_frame, bg=self.card_bg)
+            line1_frame.pack(anchor=tk.W, pady=(8, 0))
+            
+            tk.Label(line1_frame, text="每成功邀请",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+            
+            tk.Label(line1_frame, text="1",
+                    font=('Arial', 14, 'bold'),
+                    bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+            
+            tk.Label(line1_frame, text="位新用户注册",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+            
+            # 第二行：可获得X次标记进度功能使用权
+            line2_frame = tk.Frame(rules_frame, bg=self.card_bg)
+            line2_frame.pack(anchor=tk.W, pady=(3, 0))
+            
+            tk.Label(line2_frame, text="可获得",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
+            
+            tk.Label(line2_frame, text=str(reward_marks),
+                    font=('Arial', 14, 'bold'),
+                    bg=self.card_bg, fg=self.accent_color).pack(side=tk.LEFT)
+            
+            tk.Label(line2_frame, text="次标记进度功能使用权",
+                    font=('Arial', 11),
+                    bg=self.card_bg, fg=self.secondary_text).pack(side=tk.LEFT)
         
         # 更新VIP状态显示（包括邀请模块）
         self.update_vip_status_display()
@@ -1261,8 +1387,11 @@ class ScreenRecorder:
         if not hasattr(self, 'mini_progress_canvas') or not self.mini_progress_canvas:
             return
         
-        canvas = self.mini_progress_canvas
-        canvas.delete('all')
+        try:
+            canvas = self.mini_progress_canvas
+            canvas.delete('all')
+        except:
+            return
         
         width = canvas.winfo_width()
         height = canvas.winfo_height()
@@ -1435,18 +1564,9 @@ class ScreenRecorder:
             
         if not self.is_logged_in:
             self.invite_code_label.config(text="请登录查看")
-            self.invite_total_label.config(text="📊 累计获得：0次")
-            self.invite_remaining_label.config(text="📉 剩余可用：0次")
         else:
             # 显示邀请码（用户ID）
             self.invite_code_label.config(text=str(self.current_user['id']))
-            
-            # 获取邀请奖励统计
-            user_info = self.db.get_user_by_id(self.current_user['id'])
-            total = user_info.get('invite_reward_total', 0)
-            remaining = user_info.get('invite_reward_remaining', 0)
-            self.invite_total_label.config(text=f"📊 累计获得：{total}次")
-            self.invite_remaining_label.config(text=f"📉 剩余可用：{remaining}次")
     
     def copy_invite_code(self):
         """复制邀请码到剪贴板"""
@@ -4807,13 +4927,7 @@ class ScreenRecorder:
             "type": user['login_type']
         }
         
-        if self.current_user["type"] == "wechat":
-            self.user_avatar_btn.config(text="💬")
-        elif self.current_user["type"] == "phone":
-            self.user_avatar_btn.config(text="📱")
-        else:
-            name = self.current_user['name']
-            self.user_avatar_btn.config(text=name[0] if name else "👤")
+        self.user_avatar_btn.config(text="👤")
         
         self.show_login_tip(f"登录成功，欢迎 {self.current_user['name']}", is_success=True)
         self.update_mark_badge()
@@ -4839,7 +4953,7 @@ class ScreenRecorder:
         avatar_frame = tk.Frame(user_dialog, bg="#4CAF50", padx=50, pady=20)
         avatar_frame.pack(fill=tk.X)
         
-        avatar_label = tk.Label(avatar_frame, text=self.user_avatar_btn.cget("text"), 
+        avatar_label = tk.Label(avatar_frame, text="👤", 
                                font=('Arial', 32))
         avatar_label.pack()
         
@@ -4931,16 +5045,29 @@ class ScreenRecorder:
                     error_label.config(text="不能填写自己的邀请码")
                     return
                 
+                # 获取奖励配置
+                reward_type = self.db.get_config('invite_reward_type') or 'marks'
+                if reward_type == 'vip':
+                    reward_value = int(self.db.get_config('invite_reward_vip_days') or '1')
+                else:
+                    reward_value = int(self.db.get_config('invite_reward_marks') or '10')
+                
                 # 执行邀请逻辑
-                reward = int(self.db.get_config('invite_reward_marks') or '10')
-                success = self.db.submit_invite_code(self.current_user['id'], int(invite_code), reward)
+                success = self.db.submit_invite_code(self.current_user['id'], int(invite_code), reward_type, reward_value)
                 
                 if success:
-                    error_label.config(text="邀请码填写成功！", fg="#4CAF50")
+                    if reward_type == 'vip':
+                        error_label.config(text=f"邀请码填写成功！已获得{reward_value}天VIP会员权益", fg="#4CAF50")
+                    else:
+                        error_label.config(text=f"邀请码填写成功！已获得{reward_value}次标记进度次数", fg="#4CAF50")
                     invite_entry.config(state=tk.DISABLED)
                     submit_btn.config(state=tk.DISABLED)
                     # 更新邀请模块显示
                     self.update_invite_display()
+                    # 更新VIP状态显示
+                    self.update_vip_status_display()
+                    # 更新标记按钮角标
+                    self.update_mark_badge()
                 else:
                     error_label.config(text="操作失败，请重试")
         else:
