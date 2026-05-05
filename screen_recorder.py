@@ -358,56 +358,90 @@ class DatabaseManager:
     def purchase_vip(self, user_id, vip_type, vip_name, duration_days, amount):
         conn = self.get_connection()
         cursor = conn.cursor()
+        try:
+            purchase_id = str(uuid.uuid4())
+            # 使用UUID确保订单号唯一
+            order_no = f"VIP_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-        purchase_id = str(uuid.uuid4())
-        order_no = f"VIP{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            start_at = self.get_beijing_time()
+            expire_at = (datetime.strptime(start_at, '%Y-%m-%d %H:%M:%S') + timedelta(days=duration_days)).strftime('%Y-%m-%d %H:%M:%S') if duration_days else None
 
-        start_at = self.get_beijing_time()
-        expire_at = (datetime.strptime(start_at, '%Y-%m-%d %H:%M:%S') + timedelta(days=duration_days)).strftime('%Y-%m-%d %H:%M:%S') if duration_days else None
+            cursor.execute('''
+                INSERT INTO vip_purchases
+                (id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (purchase_id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, 1, start_at))
 
-        cursor.execute('''
-            INSERT INTO vip_purchases
-            (id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (purchase_id, user_id, vip_type, vip_name, duration_days, start_at, expire_at, order_no, amount, start_at))
+            self._update_user_vip_status(cursor, user_id)
+            
+            vip_marks = 999999999999999999
+            now = self.get_beijing_time()
+            cursor.execute('''
+                UPDATE users
+                SET remaining_marks = ?, updated_at = ?
+                WHERE id = ?
+            ''', (vip_marks, now, user_id))
 
-        self._update_user_vip_status(cursor, user_id)
-        
-        vip_marks = 999999999999999999
-        now = self.get_beijing_time()
-        cursor.execute('''
-            UPDATE users
-            SET remaining_marks = ?, updated_at = ?
-            WHERE id = ?
-        ''', (vip_marks, now, user_id))
-
-        conn.commit()
-        conn.close()
-        return purchase_id
+            conn.commit()
+            return purchase_id
+        except Exception as e:
+            print(f"[购买VIP错误] {e}")
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     
     def _update_user_vip_status(self, cursor, user_id):
+        """更新用户VIP状态（同步remaining_marks）"""
         now = self.get_beijing_time()
+        
+        # 查询有效VIP
         cursor.execute('''
-            SELECT 1 FROM vip_purchases
+            SELECT expire_at FROM vip_purchases
             WHERE user_id = ? AND status = 1
             AND (expire_at IS NULL OR expire_at > ?)
+            ORDER BY expire_at DESC
             LIMIT 1
         ''', (user_id, now))
-        is_vip = 1 if cursor.fetchone() else 0
-
-        cursor.execute('''
-            SELECT MAX(expire_at) as latest_expire FROM vip_purchases
-            WHERE user_id = ? AND status = 1
-        ''', (user_id,))
-        latest_expire = cursor.fetchone()['latest_expire']
+        vip_record = cursor.fetchone()
         
-        remaining_marks = 0 if is_vip == 0 else None
+        # 判断是否有有效VIP
+        if vip_record:
+            is_vip = 1
+            latest_expire = vip_record['expire_at']
+            print(f"[VIP状态检查] 用户 {user_id}: 发现有效VIP购买记录, expire_at={latest_expire}, 当前时间={now}")
+        else:
+            is_vip = 0
+            latest_expire = None
+            print(f"[VIP状态检查] 用户 {user_id}: 无有效VIP购买记录, 当前时间={now}")
+        
+        # 根据VIP状态设置remaining_marks
+        if is_vip == 1:
+            remaining_marks = 999999999999999999  # VIP用户无限次数
+        else:
+            remaining_marks = 0  # 非VIP用户次数清零
 
         cursor.execute('''
             UPDATE users
-            SET is_vip = ?, vip_expire_at = ?, remaining_marks = COALESCE(?, remaining_marks), updated_at = ?
+            SET is_vip = ?, vip_expire_at = ?, remaining_marks = ?, updated_at = ?
             WHERE id = ?
         ''', (is_vip, latest_expire, remaining_marks, now, user_id))
+        
+        print(f"[VIP状态更新] 用户 {user_id}: is_vip={is_vip}, vip_expire_at={latest_expire}, remaining_marks={remaining_marks}, 执行时间={now}")
+    
+    def refresh_user_vip_status(self, user_id):
+        """刷新用户VIP状态"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            self._update_user_vip_status(cursor, user_id)
+            conn.commit()
+            print(f"[VIP状态刷新] 用户 {user_id} VIP状态已更新")
+        except Exception as e:
+            print(f"[VIP状态刷新] 错误: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
     
     def get_user_vip_status(self, user_id):
         user = self.get_user_by_id(user_id)
@@ -795,6 +829,9 @@ class ScreenRecorder:
         
         # 启动文件系统监控
         self.start_file_monitor()
+        
+        # 启动VIP过期检查定时任务（每5分钟检查一次）
+        self.schedule_vip_check()
     
     def ensure_directories(self):
         """确保必要的目录存在"""
@@ -804,6 +841,50 @@ class ScreenRecorder:
         # 确保视频资料库目录存在
         if not os.path.exists(self.video_library_dir):
             os.makedirs(self.video_library_dir)
+    
+    def schedule_vip_check(self):
+        """调度VIP过期检查（每5分钟执行一次）"""
+        self.check_vip_expiry()
+        # 5分钟后再次检查（单位：毫秒）
+        self.root.after(5 * 60 * 1000, self.schedule_vip_check)
+    
+    def check_vip_expiry(self):
+        """检查所有用户的VIP过期情况"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        try:
+            now = self.db.get_beijing_time()
+            
+            # 查询所有VIP过期的用户
+            cursor.execute('''
+                SELECT id FROM users
+                WHERE is_vip = 1 
+                AND vip_expire_at IS NOT NULL 
+                AND vip_expire_at < ?
+            ''', (now,))
+            
+            expired_users = cursor.fetchall()
+            for user in expired_users:
+                user_id = user['id']
+                
+                # 更新VIP状态
+                cursor.execute('''
+                    UPDATE users
+                    SET is_vip = 0, 
+                        remaining_marks = 0,
+                        updated_at = ?
+                    WHERE id = ?
+                ''', (now, user_id))
+                
+                print(f"[VIP过期] 用户 {user_id} VIP已过期")
+            
+            conn.commit()
+            print(f"[VIP过期检查] 完成，检查时间: {now}")
+        except Exception as e:
+            print(f"[VIP过期检查] 错误: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
     
     def start_file_monitor(self):
         """启动文件系统监控"""
@@ -1134,19 +1215,19 @@ class ScreenRecorder:
         tk.Label(line2_frame, text="截取视频", font=('STKaiti', 12, 'bold'), bg=self.bg_color, fg='#e74c3c').pack(side=tk.LEFT)
         tk.Label(line2_frame, text="功能无限次使用", font=('STKaiti', 12), bg=self.bg_color, fg=self.secondary_text).pack(side=tk.LEFT)
         
-        # 用户VIP状态卡片
-        self.vip_status_card = tk.Frame(left_frame, bg=self.card_bg, padx=15, pady=12)
-        self.vip_status_card.pack(fill=tk.X, pady=(0, 15))
-        
-        self.vip_status_label = tk.Label(self.vip_status_card, text="正在加载...",
-                                        font=('Arial', 11),
-                                        bg=self.card_bg, fg=self.text_color)
-        self.vip_status_label.pack(side=tk.LEFT)
-        
-        self.vip_days_label = tk.Label(self.vip_status_card, text="",
-                                        font=('Arial', 10),
-                                        bg=self.card_bg, fg=self.secondary_text)
-        self.vip_days_label.pack(side=tk.RIGHT)
+        # 用户VIP状态卡片 - 已隐藏
+        # self.vip_status_card = tk.Frame(left_frame, bg=self.card_bg, padx=15, pady=12)
+        # self.vip_status_card.pack(fill=tk.X, pady=(0, 15))
+        # 
+        # self.vip_status_label = tk.Label(self.vip_status_card, text="正在加载...",
+        #                                 font=('Arial', 11),
+        #                                 bg=self.card_bg, fg=self.text_color)
+        # self.vip_status_label.pack(side=tk.LEFT)
+        # 
+        # self.vip_days_label = tk.Label(self.vip_status_card, text="",
+        #                                 font=('Arial', 10),
+        #                                 bg=self.card_bg, fg=self.secondary_text)
+        # self.vip_days_label.pack(side=tk.RIGHT)
         
         # 会员商品卡片容器 - 纵向排列
         products_frame = tk.Frame(left_frame, bg=self.bg_color)
@@ -1509,53 +1590,28 @@ class ScreenRecorder:
 
     def update_vip_status_display(self):
         """更新VIP状态显示"""
-        if not hasattr(self, 'vip_status_label'):
-            return
-            
-        if not self.is_logged_in:
-            # 删除未登录文案，保持空白或隐藏
-            self.vip_status_label.config(text="", fg=self.secondary_text)
-            self.vip_days_label.config(text="")
-            
-            # 更新大状态卡片
-            if hasattr(self, 'vip_big_status_card'):
+        # 更新大状态卡片
+        if hasattr(self, 'vip_big_status_card'):
+            if not self.is_logged_in:
                 self.vip_big_status_card.config(bg="#666666")
                 self.vip_big_status_label.config(text="请先登录", bg="#666666")
                 self.vip_big_expire_label.config(text="", bg="#666666")
-            
-            # 更新邀请模块
-            self.update_invite_display()
-        else:
-            vip_status = self.db.get_user_vip_status(self.current_user['id'])
-            if vip_status['is_vip']:
-                # 更新小状态卡片
-                self.vip_status_label.config(text="💎 VIP会员", fg=self.accent_color)
-                if vip_status['vip_expire_at']:
-                    self.vip_days_label.config(text=f"到期: {vip_status['vip_expire_at']}", fg=self.secondary_text)
-                else:
-                    self.vip_days_label.config(text="永久有效", fg=self.accent_color)
-                
-                # 更新大状态卡片
-                if hasattr(self, 'vip_big_status_card'):
+            else:
+                vip_status = self.db.get_user_vip_status(self.current_user['id'])
+                if vip_status['is_vip']:
                     self.vip_big_status_card.config(bg=self.accent_color)
                     self.vip_big_status_label.config(text="🎉 您是VIP会员", bg=self.accent_color)
                     if vip_status['vip_expire_at']:
                         self.vip_big_expire_label.config(text=f"到期: {vip_status['vip_expire_at']}", bg=self.accent_color)
                     else:
                         self.vip_big_expire_label.config(text="永久有效", bg=self.accent_color)
-            else:
-                # 更新小状态卡片
-                self.vip_status_label.config(text="普通用户", fg=self.secondary_text)
-                self.vip_days_label.config(text="开通会员享受无限标记次数")
-                
-                # 更新大状态卡片
-                if hasattr(self, 'vip_big_status_card'):
+                else:
                     self.vip_big_status_card.config(bg="#e74c3c")
                     self.vip_big_status_label.config(text="📦 普通用户", bg="#e74c3c")
                     self.vip_big_expire_label.config(text="开通会员享受更多功能", bg="#e74c3c")
-            
-            # 更新邀请模块
-            self.update_invite_display()
+        
+        # 更新邀请模块
+        self.update_invite_display()
     
     def update_invite_display(self):
         """更新邀请模块显示"""
@@ -2290,6 +2346,9 @@ class ScreenRecorder:
         if not self.is_logged_in:
             self.show_login_dialog()
             return
+        
+        # 检查并刷新VIP状态
+        self.db.refresh_user_vip_status(self.current_user['id'])
         
         screen_width, screen_height = pyautogui.size()
         self.x = 0
@@ -3512,6 +3571,9 @@ class ScreenRecorder:
                 self.show_notification("请先登录账号", is_weak=True)
                 self.show_login_dialog()
                 return
+            
+            # 检查并刷新VIP状态
+            self.db.refresh_user_vip_status(self.current_user['id'])
             
             vip_status = self.db.get_user_vip_status(self.current_user['id'])
             if not vip_status['is_vip']:
@@ -4926,6 +4988,9 @@ class ScreenRecorder:
             "name": user.get('nickname') or user.get('email') or user.get('phone') or "用户",
             "type": user['login_type']
         }
+        
+        # 登录时刷新VIP状态
+        self.db.refresh_user_vip_status(user['id'])
         
         self.user_avatar_btn.config(text="👤")
         
