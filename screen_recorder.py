@@ -437,12 +437,11 @@ class DatabaseManager:
             self._update_user_vip_status(cursor, user_id)
             conn.commit()
             print(f"[VIP状态刷新] 用户 {user_id} VIP状态已更新")
-            self.update_vip_status_display()
-            self.update_mark_badge()
-            self.update_finish_clip_badge()
+            return True
         except Exception as e:
             print(f"[VIP状态刷新] 错误: {e}")
             conn.rollback()
+            return False
         finally:
             conn.close()
     
@@ -2418,7 +2417,10 @@ class ScreenRecorder:
             return
         
         # 检查并刷新VIP状态
-        self.db.refresh_user_vip_status(self.current_user['id'])
+        if self.db.refresh_user_vip_status(self.current_user['id']):
+            self.update_vip_status_display()
+            self.update_mark_badge()
+            self.update_finish_clip_badge()
         
         screen_width, screen_height = pyautogui.size()
         self.x = 0
@@ -2495,7 +2497,7 @@ class ScreenRecorder:
         self.stop_update = False
         self.update_thread.daemon = True
         self.update_thread.start()
-        self.recorder = cv2.VideoWriter(self.video_file, cv2.VideoWriter_fourcc(*'XVID'), 20.0, (self.width, self.height))
+        self.recorder = cv2.VideoWriter(self.video_file, cv2.VideoWriter_fourcc(*'XVID'), 10.0, (self.width, self.height))
         self.record_thread = threading.Thread(target=self.record_screen)
         self.record_thread.daemon = True
         self.record_thread.start()
@@ -3124,17 +3126,39 @@ class ScreenRecorder:
         self.clip_btn.config(state=tk.NORMAL)
     
     def record_screen(self):
+        target_fps = 10.0
+        frame_interval = 1.0 / target_fps
+        next_frame_time = time.time()
+        frame_count = 0
+        start_time = time.time()
+        
         while self.recording:
             if not self.paused:
+                frame_start = time.time()
+                
                 screenshot = pyautogui.screenshot(region=(self.x, self.y, self.width, self.height))
                 frame = np.array(screenshot)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 self.recorder.write(frame)
                 self.recorded_frames += 1
-                time.sleep(0.05)
+                frame_count += 1
+                
+                frame_write_time = time.time() - frame_start
+                
+                next_frame_time += frame_interval
+                
+                current_time = time.time()
+                sleep_time = next_frame_time - current_time
+                
+                if frame_count <= 100 or frame_count % 100 == 0:
+                    elapsed_total = current_time - start_time
+                    actual_fps = frame_count / elapsed_total if elapsed_total > 0 else 0
+                    print(f"[录帧] #{frame_count:4d} | 写帧:{frame_write_time*1000:.1f}ms | 等待:{max(0, sleep_time)*1000:.1f}ms | 实际FPS:{actual_fps:.2f} | total:{elapsed_total:.1f}s")
+                
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
             else:
-                # 每次暂停时都更新 pause_start_time
-                self.pause_start_time = time.time()
+                next_frame_time = time.time()
                 time.sleep(0.1)
     
     def save_markers_to_file(self):
@@ -3292,6 +3316,9 @@ class ScreenRecorder:
                 frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
                 if fps > 0:
                     self.video_duration = frame_count / fps
+                    print(f"[视频时长计算] 文件: {self.video_file}")
+                    print(f"[视频时长计算] FPS: {fps}, 帧数: {frame_count}")
+                    print(f"[视频时长计算] 计算时长: {self.video_duration:.2f}秒")
                 cap.release()
     
     def update_progress_bar(self):
@@ -3527,8 +3554,8 @@ class ScreenRecorder:
             if self.recording:
                 # 录屏时：根据实际录制帧数计算时间，确保与视频时长一致
                 if not self.paused:
-                    # 使用实际录制帧数计算时间（20fps）
-                    self.current_time = self.recorded_frames / 20.0
+                    # 使用实际录制帧数计算时间（10fps，与VideoWriter设置一致）
+                    self.current_time = self.recorded_frames / 10.0
             elif self.video_duration > 0 and self.video_playing and not self.progress_bar_dragging:
                 if not self.video_paused:
                     self.current_time += 0.1
@@ -3643,7 +3670,10 @@ class ScreenRecorder:
                 return
             
             # 检查并刷新VIP状态
-            self.db.refresh_user_vip_status(self.current_user['id'])
+            if self.db.refresh_user_vip_status(self.current_user['id']):
+                self.update_vip_status_display()
+                self.update_mark_badge()
+                self.update_finish_clip_badge()
             
             vip_status = self.db.get_user_vip_status(self.current_user['id'])
             if not vip_status['is_vip']:
