@@ -769,8 +769,10 @@ class ScreenRecorder:
         except Exception as e:
             print(f"Failed to set window icon: {e}")
         
-        # 初始化数据库
-        self.db = DatabaseManager()
+        # 初始化数据库 - 使用用户文档目录确保权限
+        db_path = os.path.join(os.path.expanduser("~/Documents"), "LiveRecorder", "screen_recorder.db")
+        print(f"[启动] 数据库路径: {db_path}")
+        self.db = DatabaseManager(db_path)
         
         # 获取屏幕大小的80%
         screen_width = root.winfo_screenwidth()
@@ -838,14 +840,23 @@ class ScreenRecorder:
         self.mini_mark_btn = None
         self.mini_status_label = None
         
-        # 目录相关变量
-        self.recordings_dir = "recordings"  # 文件夹X
+        # 目录相关变量 - 使用用户文档目录确保权限兼容
+        user_documents = os.path.expanduser("~/Documents")
+        self.app_data_dir = os.path.join(user_documents, "LiveRecorder")
+        self.recordings_dir = os.path.join(self.app_data_dir, "recordings")  # 录制视频保存目录
         self.current_session_dir = None  # 当前录制会话目录
         self.clip_dir = "截取视频"  # 截取视频文件夹
-        self.video_library_dir = "视频资料库"  # 独立的视频资料库目录
+        self.video_library_dir = os.path.join(self.app_data_dir, "视频资料库")  # 独立的视频资料库目录
         
         # 确保目录存在
         self.ensure_directories()
+        
+        # 显示路径信息
+        print("=" * 60)
+        print(f"[启动] 应用数据目录: {self.app_data_dir}")
+        print(f"[启动] 录制保存目录: {self.recordings_dir}")
+        print(f"[启动] 视频资料库: {self.video_library_dir}")
+        print("=" * 60)
 
         self.create_ui()
         
@@ -859,19 +870,21 @@ class ScreenRecorder:
         self.try_auto_login()
     
     def save_login_state(self, user_id):
-        """保存登录状态到本地文件"""
+        """保存登录状态到用户文档目录"""
         try:
-            with open("login_state.json", "w", encoding="utf-8") as f:
+            login_state_file = os.path.join(self.app_data_dir, "login_state.json")
+            with open(login_state_file, "w", encoding="utf-8") as f:
                 json.dump({"user_id": user_id, "saved_at": datetime.now().isoformat()}, f)
-            print(f"[登录状态] 已保存用户 {user_id} 的登录状态")
+            print(f"[登录状态] 已保存用户 {user_id} 的登录状态到: {login_state_file}")
         except Exception as e:
             print(f"[登录状态] 保存失败: {e}")
     
     def clear_login_state(self):
         """清除本地登录状态"""
         try:
-            if os.path.exists("login_state.json"):
-                os.remove("login_state.json")
+            login_state_file = os.path.join(self.app_data_dir, "login_state.json")
+            if os.path.exists(login_state_file):
+                os.remove(login_state_file)
             print("[登录状态] 已清除本地登录状态")
         except Exception as e:
             print(f"[登录状态] 清除失败: {e}")
@@ -879,10 +892,11 @@ class ScreenRecorder:
     def try_auto_login(self):
         """尝试自动登录"""
         try:
-            if not os.path.exists("login_state.json"):
+            login_state_file = os.path.join(self.app_data_dir, "login_state.json")
+            if not os.path.exists(login_state_file):
                 return
             
-            with open("login_state.json", "r", encoding="utf-8") as f:
+            with open(login_state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             user_id = data.get("user_id")
@@ -903,13 +917,36 @@ class ScreenRecorder:
             self.clear_login_state()
     
     def ensure_directories(self):
-        """确保必要的目录存在"""
-        # 确保recordings目录存在
-        if not os.path.exists(self.recordings_dir):
-            os.makedirs(self.recordings_dir)
-        # 确保视频资料库目录存在
-        if not os.path.exists(self.video_library_dir):
-            os.makedirs(self.video_library_dir)
+        """确保必要的目录存在 - 使用用户文档目录确保权限"""
+        try:
+            # 确保应用数据根目录存在
+            if not os.path.exists(self.app_data_dir):
+                os.makedirs(self.app_data_dir)
+                print(f"[目录] 创建应用数据目录: {self.app_data_dir}")
+            
+            # 确保recordings目录存在
+            if not os.path.exists(self.recordings_dir):
+                os.makedirs(self.recordings_dir)
+                print(f"[目录] 创建录制目录: {self.recordings_dir}")
+            
+            # 确保视频资料库目录存在
+            if not os.path.exists(self.video_library_dir):
+                os.makedirs(self.video_library_dir)
+                print(f"[目录] 创建视频资料库: {self.video_library_dir}")
+                
+        except Exception as e:
+            # 备用方案：使用临时目录
+            print(f"[错误] 创建目录失败: {e}")
+            print(f"[信息] 尝试使用临时目录作为备用")
+            import tempfile
+            self.app_data_dir = os.path.join(tempfile.gettempdir(), "LiveRecorder")
+            self.recordings_dir = os.path.join(self.app_data_dir, "recordings")
+            self.video_library_dir = os.path.join(self.app_data_dir, "视频资料库")
+            if not os.path.exists(self.recordings_dir):
+                os.makedirs(self.recordings_dir)
+            if not os.path.exists(self.video_library_dir):
+                os.makedirs(self.video_library_dir)
+            print(f"[备用] 使用临时目录: {self.app_data_dir}")
     
     def schedule_vip_check(self):
         """调度VIP过期检查（每5分钟执行一次）"""
@@ -2598,105 +2635,112 @@ class ScreenRecorder:
     def open_video_location(self):
         """打开视频文件所在的目录并选中该文件"""
         if not self.video_file or not os.path.exists(self.video_file):
+            print(f"[DEBUG] video_file不存在: {self.video_file}")
             return
         
         try:
-            # 打开目录并选中文件
             if os.name == 'nt':  # Windows
-                # 使用 explorer.exe /select 命令选中文件
                 import subprocess
-                subprocess.run(['explorer.exe', '/select,', self.video_file])
+                video_file_normalized = os.path.normpath(self.video_file)
+                print(f"[DEBUG] video_file = {self.video_file}")
+                print(f"[DEBUG] normalized path = {video_file_normalized}")
+                print(f"[DEBUG] file exists: {os.path.exists(video_file_normalized)}")
+                
+                try:
+                    cmd = f'explorer.exe /select,"{video_file_normalized}"'
+                    print(f"[DEBUG] executing: {cmd}")
+                    subprocess.run(cmd, shell=True, check=True)
+                except Exception as e:
+                    print(f"[DEBUG] /select命令失败: {e}，尝试回退到只打开目录")
+                    file_dir = os.path.dirname(video_file_normalized)
+                    if os.path.exists(file_dir):
+                        os.startfile(file_dir)
             elif os.name == 'posix':  # macOS/Linux
                 if 'darwin' in sys.platform:  # macOS
                     import subprocess
                     subprocess.run(['open', '-R', self.video_file])
                 else:  # Linux
-                    # 尝试使用常见的文件管理器
                     import subprocess
                     try:
-                        # 尝试 Nautilus (GNOME)
                         subprocess.run(['nautilus', '--select', self.video_file])
                     except FileNotFoundError:
                         try:
-                            # 尝试 Dolphin (KDE)
                             subprocess.run(['dolphin', '--select', self.video_file])
                         except FileNotFoundError:
-                            # 尝试 Thunar (Xfce)
                             subprocess.run(['thunar', '--select', self.video_file])
         except Exception as e:
-            print(f"打开文件位置失败: {e}")
+            print(f"[错误] 打开文件位置失败: {e}")
             self.show_notification("打开文件位置失败", is_weak=True)
     
     def open_clip_location(self):
         """打开选中片段所在的目录并选中该文件"""
         if not self.current_session_dir:
+            print(f"[DEBUG] current_session_dir为空")
             return
         
         try:
-            # 获取截取视频文件夹
             clip_dir = os.path.join(self.current_session_dir, self.clip_dir)
-            # 确保目录存在
             if not os.path.exists(clip_dir):
                 os.makedirs(clip_dir)
             
-            # 获取选中的片段
             selected_index = self.clip_listbox.curselection()
             if selected_index:
-                # 构建选中片段的文件路径
                 clip_index = selected_index[0]
                 if clip_index < len(self.clips):
                     clip = self.clips[clip_index]
-                    # 检查片段是否有文件夹名称（新结构）
                     if 'folder_name' in clip:
-                        # 新结构：片段在单独的文件夹中
                         clip_folder = os.path.join(clip_dir, clip['folder_name'])
                         clip_file = os.path.join(clip_folder, "clip.avi")
                     else:
-                        # 旧结构：直接在截取视频文件夹中
                         clip_id = clip.get('id', clip_index + 1)
                         if 'name' in clip and clip['name']:
                             clip_file = os.path.join(clip_dir, f"{clip['name']}.avi")
                         else:
-                            # 获取当前视频的文件名（不含路径和后缀）
                             video_filename = ""
                             if self.video_file:
                                 basename = os.path.basename(self.video_file)
                                 video_filename = os.path.splitext(basename)[0] + "_"
-                            # 使用与显示名称一致的格式
                             clip_file = os.path.join(clip_dir, f"{video_filename}片段 {clip_id}.avi")
                     
-                    # 打开目录并选中文件
+                    print(f"[DEBUG] clip_file = {clip_file}")
+                    print(f"[DEBUG] clip_file exists: {os.path.exists(clip_file)}")
+                    
                     if os.path.exists(clip_file):
                         if os.name == 'nt':  # Windows
                             import subprocess
-                            subprocess.run(['explorer.exe', '/select,', clip_file])
-                        elif os.name == 'posix':  # macOS/Linux
-                            if 'darwin' in sys.platform:  # macOS
+                            clip_file_normalized = os.path.normpath(clip_file)
+                            
+                            try:
+                                cmd = f'explorer.exe /select,"{clip_file_normalized}"'
+                                print(f"[DEBUG] executing: {cmd}")
+                                subprocess.run(cmd, shell=True, check=True)
+                            except Exception as e:
+                                print(f"[DEBUG] /select命令失败: {e}，尝试回退到只打开目录")
+                                file_dir = os.path.dirname(clip_file_normalized)
+                                if os.path.exists(file_dir):
+                                    os.startfile(file_dir)
+                        elif os.name == 'posix':
+                            if 'darwin' in sys.platform:
                                 import subprocess
                                 subprocess.run(['open', '-R', clip_file])
-                            else:  # Linux
-                                # 尝试使用常见的文件管理器
+                            else:
                                 import subprocess
                                 try:
-                                    # 尝试 Nautilus (GNOME)
                                     subprocess.run(['nautilus', '--select', clip_file])
                                 except FileNotFoundError:
                                     try:
-                                        # 尝试 Dolphin (KDE)
                                         subprocess.run(['dolphin', '--select', clip_file])
                                     except FileNotFoundError:
-                                        # 尝试 Thunar (Xfce)
                                         subprocess.run(['thunar', '--select', clip_file])
                         return
             
-            # 如果没有选中片段或片段文件不存在，只打开目录
             if os.name == 'nt':  # Windows
                 os.startfile(clip_dir)
-            else:  # macOS/Linux
+            else:
                 import subprocess
                 subprocess.call(['open', clip_dir])
         except Exception as e:
-            print(f"打开文件位置失败: {e}")
+            print(f"[错误] 打开文件位置失败: {e}")
             self.show_notification("打开文件位置失败", is_weak=True)
     
     def rename_selected_clip(self):
@@ -2716,7 +2760,7 @@ class ScreenRecorder:
         # 创建重命名窗口
         rename_window = tk.Toplevel(self.root)
         rename_window.title("重命名片段")
-        rename_window.geometry("400x150")
+        rename_window.geometry("400x195")
         rename_window.configure(bg=self.card_bg)
         rename_window.resizable(False, False)
         rename_window.attributes('-topmost', True)
@@ -2726,8 +2770,8 @@ class ScreenRecorder:
         screen_width = rename_window.winfo_screenwidth()
         screen_height = rename_window.winfo_screenheight()
         x = (screen_width - 400) // 2
-        y = (screen_height - 150) // 2
-        rename_window.geometry(f"400x150+{x}+{y}")
+        y = (screen_height - 195) // 2
+        rename_window.geometry(f"400x195+{x}+{y}")
         
         # 当前名称
         if 'name' in clip and clip['name']:
@@ -2892,7 +2936,7 @@ class ScreenRecorder:
         # 创建弹窗
         rename_window = tk.Toplevel(self.root)
         rename_window.title("修改文件名")
-        rename_window.geometry("400x150")
+        rename_window.geometry("400x195")
         rename_window.configure(bg=self.card_bg)
         rename_window.resizable(False, False)
         rename_window.attributes('-topmost', True)
@@ -2902,8 +2946,8 @@ class ScreenRecorder:
         screen_width = rename_window.winfo_screenwidth()
         screen_height = rename_window.winfo_screenheight()
         x = (screen_width - 400) // 2
-        y = (screen_height - 150) // 2
-        rename_window.geometry(f"400x150+{x}+{y}")
+        y = (screen_height - 195) // 2
+        rename_window.geometry(f"400x195+{x}+{y}")
         
         # 当前文件名
         current_filename = os.path.basename(self.video_file)
@@ -3164,19 +3208,38 @@ class ScreenRecorder:
     def save_markers_to_file(self):
         """保存标记信息到会话目录的JSON文件（包含工具校验码）"""
         if not self.current_session_dir:
+            print("[保存] 跳过：当前会话目录为空")
             return
         
         markers_file = os.path.join(self.current_session_dir, "markers.json")
         try:
+            # 先测试目录是否可写
+            test_file = os.path.join(self.current_session_dir, ".test_write")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            print(f"[保存] 目录可写: {self.current_session_dir}")
+            
+            # 实际保存数据
             data = {
                 "tool_signature": "live_recorder_marker_tool_v1",
                 "markers": self.markers
             }
             with open(markers_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"标记已保存到: {markers_file}")
+            print(f"[保存] 标记已保存到: {markers_file}")
+            
+            # 验证文件是否真的存在
+            if os.path.exists(markers_file):
+                file_size = os.path.getsize(markers_file)
+                print(f"[保存] 文件大小: {file_size} 字节")
+            else:
+                print(f"[警告] 文件创建后不存在！")
+                
         except Exception as e:
-            print(f"保存标记失败: {e}")
+            print(f"[错误] 保存标记失败: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
     
     def load_markers_from_file(self):
         """从会话目录的JSON文件加载标记信息（兼容新旧格式）"""
