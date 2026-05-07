@@ -750,6 +750,26 @@ class ScreenRecorder:
         self.root = root
         self.root.title("直播录屏标记助手")
         
+        # 设置窗口图标
+        import os
+        import sys
+        try:
+            if hasattr(sys, '_MEIPASS'):
+                icon_path = os.path.join(sys._MEIPASS, 'app_icon.ico')
+            else:
+                icon_path = os.path.join(os.path.dirname(__file__), 'app_icon.ico')
+            
+            if os.path.exists(icon_path):
+                from PIL import Image, ImageTk
+                icon_image = Image.open(icon_path)
+                icon_photo = ImageTk.PhotoImage(icon_image)
+                self.root.iconphoto(True, icon_photo)
+                print(f"Successfully set window icon: {icon_path}")
+            else:
+                print(f"Icon file not found: {icon_path}")
+        except Exception as e:
+            print(f"Failed to set window icon: {e}")
+        
         # 初始化数据库
         self.db = DatabaseManager()
         
