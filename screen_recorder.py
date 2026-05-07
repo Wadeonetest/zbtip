@@ -3291,16 +3291,11 @@ class ScreenRecorder:
         
         video_file = video_files[0]
         
-        # 条件 3：文件名格式正确
-        if not video_file.startswith('recording_') or not video_file.endswith('.avi'):
+        # 条件 3：文件名格式正确（允许用户自定义文件名）
+        if not video_file.endswith('.avi'):
             return False, "文件名格式不正确"
         
-        # 条件 4：文件名与目录名匹配
-        expected_filename = f"recording_{session_dir}.avi"
-        if video_file != expected_filename:
-            return False, "文件名与目录名不匹配"
-        
-        # 条件 5：存在 markers.json 文件
+        # 条件 4：存在 markers.json 文件
         markers_file = os.path.join(session_path, "markers.json")
         if not os.path.exists(markers_file):
             return False, "未找到标记文件"
