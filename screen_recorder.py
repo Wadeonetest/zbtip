@@ -925,6 +925,10 @@ class ScreenRecorder:
         self.progress_bar_dragging = False
         self.video_lock = threading.Lock()  # 视频操作锁，防止多线程冲突
         
+        # 音视频同步时间基准变量
+        self.playback_base_sec = 0.0
+        self.play_start_tick = 0
+        
         # 用户账号相关变量
         self.is_logged_in = False  # 用户登录状态
         self.current_user = None  # 当前用户信息
@@ -2626,37 +2630,65 @@ class ScreenRecorder:
         
         # 设置视频文件路径
         self.video_file = os.path.join(self.current_session_dir, f"recording_{timestamp}.avi")
-        
+
         # 重置标记和片段相关变量
         self.markers = []
         self.marker_count = 0
         self.clips = []
-        
+
         # 立即创建 markers.json（即使没有标记，用于工具校验）
         self.save_markers_to_file()
-        
+
         # 重置视频文件名标签和修改按钮
         self.video_filename_label.config(text="")
-        self.rename_btn.pack_forget()  # 隐藏修改按钮
-        
+        self.rename_btn.pack_forget()
+
         self.recording_start_time = time.time()
         self.current_time = 0
         self.recorded_frames = 0
+
+        # 设置视频文件路径（临时，不含音频）
+        self.video_file_no_audio = os.path.join(self.current_session_dir, f"recording_{timestamp}_no_audio.avi")
+        self.recorder = cv2.VideoWriter(self.video_file_no_audio, cv2.VideoWriter_fourcc(*'XVID'), 10.0, (self.width, self.height))
+        print(f"[录屏] 视频文件路径: {self.video_file_no_audio}")
+
+        # 设置音频文件路径
+        self.audio_file = os.path.join(self.current_session_dir, f"recording_{timestamp}.wav")
+        print(f"[录屏] 音频文件路径: {self.audio_file}")
+        
+        # 初始化时间戳文件路径
+        self.video_timestamps_file = os.path.join(self.current_session_dir, f"recording_{timestamp}_video_timestamps.txt")
+        self.audio_timestamps_file = os.path.join(self.current_session_dir, f"recording_{timestamp}_audio_timestamps.txt")
+
+        # 关键：先初始化并打开音频设备（同步操作），确保准备好
+        self._init_audio_recorder()
+
+        # 记录音视频统一开始时间（主时钟）- 使用高精度计时器
+        self._master_clock_start = time.perf_counter()
+
+        # 同时启动音频和视频录制线程
         self.update_thread = threading.Thread(target=self.update_progress)
         self.stop_update = False
         self.update_thread.daemon = True
         self.update_thread.start()
-        self.recorder = cv2.VideoWriter(self.video_file, cv2.VideoWriter_fourcc(*'XVID'), 10.0, (self.width, self.height))
+
+        # 启动视频录制线程
         self.record_thread = threading.Thread(target=self.record_screen)
         self.record_thread.daemon = True
         self.record_thread.start()
-        
+
+        # 启动音频录制线程
+        self.audio_thread = threading.Thread(target=self._record_audio_thread)
+        self.audio_thread.daemon = True
+        self.audio_thread.start()
+        print("[录屏] 音视频录制已同步启动")
+
         # 创建缩略功能区
         self.create_mini_control()
-        
+
         # 最小化主窗口
         self.root.iconify()
-        
+
         self.show_notification("开始录屏", is_weak=True)
     
     def pause_recording(self):
@@ -2716,28 +2748,35 @@ class ScreenRecorder:
             self.update_thread.join(timeout=1)
         if self.recorder:
             self.recorder.release()
-        
+
         # 等待录屏线程结束
         if hasattr(self, 'record_thread') and self.record_thread:
             self.record_thread.join(timeout=2)
-        
+
+        # 等待音频线程结束
+        if hasattr(self, 'audio_thread') and self.audio_thread:
+            self.audio_thread.join(timeout=2)
+
+        # 合并音视频
+        self.merge_audio_video()
+
         # 关闭缩略功能区
         self.close_mini_control()
-        
+
         # 恢复主窗口
         self.root.deiconify()
-        
+
         if self.video_file and os.path.exists(self.video_file):
             # 计算视频实际时长
             self.calculate_video_duration()
-            
+
             # 保存当前视频的标记和片段
             self.video_markers[self.video_file] = self.markers.copy()
             self.video_clips[self.video_file] = self.clips.copy()
-            
+
             # 保存 markers.json（即使没有标记也要保存，用于工具校验）
             self.save_markers_to_file()
-            
+
             self.play_btn.config(state=tk.NORMAL)
             self.show_notification("录屏完成", is_weak=True)
             self.save_recording_path()
@@ -3284,38 +3323,384 @@ class ScreenRecorder:
     def record_screen(self):
         target_fps = 10.0
         frame_interval = 1.0 / target_fps
-        next_frame_time = time.time()
+        next_frame_time = time.perf_counter()
         frame_count = 0
-        start_time = time.time()
-        
+
+        video_timestamps = []
+
         while self.recording:
             if not self.paused:
-                frame_start = time.time()
-                
+                frame_start_time = time.perf_counter()
                 screenshot = pyautogui.screenshot(region=(self.x, self.y, self.width, self.height))
                 frame = np.array(screenshot)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 self.recorder.write(frame)
+
+                pts = frame_start_time - self._master_clock_start
+                video_timestamps.append((frame_count, pts, frame_start_time))
+
                 self.recorded_frames += 1
                 frame_count += 1
-                
-                frame_write_time = time.time() - frame_start
-                
+
                 next_frame_time += frame_interval
-                
-                current_time = time.time()
+
+                current_time = time.perf_counter()
                 sleep_time = next_frame_time - current_time
-                
-                if frame_count <= 100 or frame_count % 100 == 0:
-                    elapsed_total = current_time - start_time
-                    actual_fps = frame_count / elapsed_total if elapsed_total > 0 else 0
-                    print(f"[录帧] #{frame_count:4d} | 写帧:{frame_write_time*1000:.1f}ms | 等待:{max(0, sleep_time)*1000:.1f}ms | 实际FPS:{actual_fps:.2f} | total:{elapsed_total:.1f}s")
-                
+
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             else:
-                next_frame_time = time.time()
+                next_frame_time = time.perf_counter()
                 time.sleep(0.1)
+
+        self._video_timestamps = video_timestamps
+        self._save_video_timestamps()
+
+    def _save_video_timestamps(self):
+        try:
+            with open(self.video_timestamps_file, 'w') as f:
+                f.write("# Video frame timestamps\n")
+                f.write("# frame_index, pts_seconds, wallclock_time\n")
+                for frame_idx, pts, wall_time in self._video_timestamps:
+                    f.write(f"{frame_idx},{pts:.6f},{wall_time:.6f}\n")
+            print(f"[视频] 时间戳已保存: {self.video_timestamps_file}")
+        except Exception as e:
+            print(f"[视频] 保存时间戳失败: {e}")
+
+    def _init_audio_recorder(self):
+        """预先初始化音频设备，准备好录制（同步操作）"""
+        try:
+            import pyaudiowpatch as pyaudio
+            import wave
+            
+            self._audio_format = pyaudio.paInt16
+            self._audio_channels = 2
+            self._audio_chunk = 1024
+            
+            self._audio = pyaudio.PyAudio()
+            
+            loopback_device_index = -1
+            loopback_device_rate = 44100
+            
+            for i in range(self._audio.get_device_count()):
+                device_info = self._audio.get_device_info_by_index(i)
+                if device_info['maxInputChannels'] > 0:
+                    device_name = device_info['name']
+                    is_loopback = False
+                    if hasattr(device_info, 'isLoopbackDevice'):
+                        is_loopback = device_info['isLoopbackDevice']
+                    elif 'Loopback' in device_name or 'loopback' in device_name.lower():
+                        is_loopback = True
+                    
+                    if is_loopback:
+                        loopback_device_index = i
+                        loopback_device_rate = int(device_info['defaultSampleRate'])
+                        break
+            
+            if loopback_device_index < 0:
+                for i in range(self._audio.get_device_count()):
+                    device_info = self._audio.get_device_info_by_index(i)
+                    if device_info['maxInputChannels'] > 0:
+                        device_name = device_info['name']
+                        if ("Stereo Mix" in device_name or 
+                            "立体声混音" in device_name):
+                            loopback_device_index = i
+                            loopback_device_rate = int(device_info['defaultSampleRate'])
+                            break
+            
+            self._audio_stream = None
+            self.audio_sample_rate = 44100
+            self._audio_rate = 44100
+            self._audio_use_silent = False
+            
+            if loopback_device_index >= 0:
+                try:
+                    self._audio_stream = self._audio.open(format=self._audio_format, 
+                                                          channels=self._audio_channels,
+                                                          rate=loopback_device_rate, 
+                                                          input=True,
+                                                          frames_per_buffer=self._audio_chunk,
+                                                          input_device_index=loopback_device_index,
+                                                          stream_callback=self._audio_callback)
+                    self._audio_rate = loopback_device_rate
+                    self.audio_sample_rate = self._audio_rate
+                    print(f"[音频] 设备就绪，采样率: {self._audio_rate}")
+                except Exception as e:
+                    print(f"[音频] 设备打开失败: {e}")
+            
+            if self._audio_stream is None:
+                print("[音频] 使用静音模式")
+                self._audio_use_silent = True
+                self.audio_sample_rate = 44100
+                self._audio_rate = 44100
+            
+        except Exception as e:
+            print(f"[音频] 初始化失败: {e}")
+            self._audio_use_silent = True
+            self._audio = None
+            self._audio_stream = None
+            self.audio_sample_rate = 44100
+
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """音频回调函数 - 每次有数据时自动调用"""
+        try:
+            if self.recording and not self.paused and hasattr(self, '_master_clock_start'):
+                current_time = time.perf_counter()
+                pts = current_time - self._master_clock_start
+                self._audio_chunks_with_pts.append((pts, bytes(in_data)))
+                if hasattr(self, '_audio_paused_at') and self._audio_paused_at > 0:
+                    self._audio_total_paused_time += (current_time - self._audio_paused_at)
+                    self._audio_paused_at = 0.0
+            elif self.paused and hasattr(self, '_audio_paused_at') and self._audio_paused_at == 0.0:
+                self._audio_paused_at = time.perf_counter()
+        except Exception as e:
+            print(f"[音频] 回调警告: {e}")
+        
+        import pyaudiowpatch as pyaudio
+        return (None, pyaudio.paContinue)
+    
+    def _record_audio_thread(self):
+        """使用已初始化的音频设备进行录制（回调模式）- 带有PTS"""
+        try:
+            import wave
+
+            if self._audio_use_silent:
+                print("[音频] 开始录制静音")
+                frames = self.generate_silent_audio(44100, self._audio_channels, self._audio_format)
+                if self._audio:
+                    self._audio.terminate()
+                self.save_audio_file(frames, self.audio_file, self._audio_channels,
+                                    self._audio_rate, self._audio_format, self._audio)
+                return
+
+            self._audio_chunks_with_pts = []
+            self._audio_total_paused_time = 0.0
+            self._audio_paused_at = 0.0
+            
+            print("[音频] 开始录制音频（回调模式）")
+            recording_start_time = time.perf_counter()
+            
+            self._audio_stream.start_stream()
+            
+            while self.recording:
+                time.sleep(0.1)
+            
+            record_duration = time.perf_counter() - recording_start_time
+            active_duration = record_duration - self._audio_total_paused_time
+            
+            self._audio_stream.stop_stream()
+            self._audio_stream.close()
+            self._audio.terminate()
+
+            self._audio_total_duration = active_duration
+
+            self._save_audio_timestamps_with_pts()
+
+            self._rebuild_audio_by_timestamps()
+
+        except Exception as e:
+            print(f"[音频] 录制失败: {e}")
+            try:
+                import pyaudio
+                audio = pyaudio.PyAudio()
+                frames = self.generate_silent_audio(44100, 2, pyaudio.paInt16)
+                self.save_audio_file(frames, self.audio_file, 2, 44100, pyaudio.paInt16, audio)
+                audio.terminate()
+            except:
+                self.audio_file = None
+
+    def _save_audio_timestamps_with_pts(self):
+        try:
+            with open(self.audio_timestamps_file, 'w') as f:
+                f.write("# Audio chunk timestamps with PCM data\n")
+                f.write("# chunk_index, pts_seconds, pcm_data_length\n")
+                for chunk_idx, (pts, pcm_data) in enumerate(self._audio_chunks_with_pts):
+                    f.write(f"{chunk_idx},{pts:.6f},{len(pcm_data)}\n")
+            print(f"[音频] 时间戳已保存: {self.audio_timestamps_file}")
+        except Exception as e:
+            print(f"[音频] 保存时间戳失败: {e}")
+
+    def _rebuild_audio_by_timestamps(self):
+        print("[音频] 开始顺序拼接音频...")
+
+        if not hasattr(self, '_audio_chunks_with_pts') or not self._audio_chunks_with_pts:
+            print("[音频] 没有音频数据")
+            return
+
+        sample_rate = self._audio_rate
+        channels = self._audio_channels
+        chunk_size = self._audio_chunk
+
+        bytes_per_sample = 2
+        bytes_per_frame = bytes_per_sample * channels
+        bytes_per_chunk = chunk_size * bytes_per_frame
+
+        print(f"[音频] 参数: 采样率={sample_rate}, 通道={channels}, chunk={chunk_size}")
+        print(f"[音频] 字节: 每采样={bytes_per_sample}, 每帧={bytes_per_frame}")
+        
+        # 1. 精确计算开头需要补多少静音（四舍五入）
+        first_pts = self._audio_chunks_with_pts[0][0]
+        silence_start_samples = 0
+        if first_pts > 0:
+            silence_start_samples = max(0, round(first_pts * sample_rate))
+            print(f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_start_samples}采样 (精确四舍五入)")
+        
+        # 2. 顺序拼接所有音频块
+        pcm_buffer = bytearray()
+        for pts, chunk_data in self._audio_chunks_with_pts:
+            pcm_buffer.extend(chunk_data)
+        
+        # 3. 构建静音段
+        silence = bytearray(silence_start_samples * bytes_per_frame)
+        
+        # 4. 对音频开头做200个采样的线性淡入（约4ms），消除阶跃杂音
+        import struct
+        fade_len = min(200, len(pcm_buffer) // bytes_per_frame)
+        if fade_len > 0:
+            print(f"[音频] 开头淡入处理: {fade_len}采样")
+            for i in range(fade_len):
+                idx = i * bytes_per_frame
+                # 提取左右声道的16-bit值（little-endian）
+                left = struct.unpack_from('<h', pcm_buffer, idx)[0]
+                right = struct.unpack_from('<h', pcm_buffer, idx + 2)[0]
+                # 线性增益因子，从 0 → 1
+                factor = i / fade_len
+                left = int(left * factor)
+                right = int(right * factor)
+                # 覆盖缓冲区中的这两个采样
+                struct.pack_into('<hh', pcm_buffer, idx, left, right)
+        
+        # 5. 拼接静音和音频
+        final_pcm = bytes(silence) + bytes(pcm_buffer)
+        
+        # 6. 按 chunk_size 切分成帧
+        final_frames = []
+        for i in range(0, len(final_pcm), bytes_per_chunk):
+            chunk = final_pcm[i:i + bytes_per_chunk]
+            if len(chunk) < bytes_per_chunk:
+                chunk = chunk + b'\x00' * (bytes_per_chunk - len(chunk))
+            final_frames.append(chunk)
+
+        print(f"[音频] 拼接完成，总帧数: {len(final_frames)}, 静音开头: {len(silence)//bytes_per_frame}帧")
+        print(f"[音频] 实际音频长度: {len(pcm_buffer)//bytes_per_frame}帧")
+
+        self.save_audio_file(final_frames, self.audio_file, channels,
+                            sample_rate, self._audio_format, self._audio)
+
+    def record_audio(self):
+        """旧的录制接口，保持兼容性（现在默认不使用）"""
+        self._init_audio_recorder()
+        self._record_audio_thread()
+    
+    def generate_silent_audio(self, rate, channels, format_type):
+        """生成静音音频数据（持续约60秒）"""
+        import pyaudio
+        chunk = 1024
+        duration = 60  # 生成60秒静音
+        total_frames = int(rate / chunk * duration)
+        sample_width = pyaudio.get_sample_size(format_type)
+        silent_data = b'\x00' * chunk * channels * sample_width
+        return [silent_data] * total_frames
+    
+    def save_audio_file(self, frames, file_path, channels, rate, format_type, audio):
+        """保存音频文件"""
+        import wave
+        try:
+            wf = wave.open(file_path, 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(audio.get_sample_size(format_type))
+            wf.setframerate(rate)
+            wf.writeframes(b''.join(frames))
+            wf.close()
+            print(f"[音频] 音频保存成功: {file_path}")
+            print(f"[音频] 音频帧数: {len(frames)}, 每帧: 1024 bytes, 采样率: {rate}, 时长: {len(frames) * 1024 / rate:.2f}秒")
+        except Exception as e:
+            print(f"[音频] 保存失败: {e}")
+    
+    def merge_audio_video(self):
+        """使用FFmpeg合并视频和音频 - 直接合并，静音自然过渡"""
+        print("\n[合并] ========== 开始音视频合并===========")
+
+        if not hasattr(self, 'video_file_no_audio'):
+            print("[合并] 错误：没有 video_file_no_audio 属性")
+            return
+
+        if not os.path.exists(self.video_file_no_audio):
+            print(f"[合并] 错误：视频文件不存在: {self.video_file_no_audio}")
+            return
+
+        print(f"[合并] 视频文件: {self.video_file_no_audio}")
+
+        if not hasattr(self, 'audio_file'):
+            print("[合并] 错误：没有 audio_file 属性")
+            os.rename(self.video_file_no_audio, self.video_file)
+            return
+
+        if not self.audio_file:
+            print("[合并] 警告：audio_file 为空")
+            os.rename(self.video_file_no_audio, self.video_file)
+            return
+
+        if not os.path.exists(self.audio_file):
+            print(f"[合并] 警告：音频文件不存在: {self.audio_file}")
+            os.rename(self.video_file_no_audio, self.video_file)
+            return
+
+        print(f"[合并] 音频文件: {self.audio_file}")
+        print(f"[合并] 输出文件: {self.video_file}")
+
+        print("[合并] 直接合并，音视频各自从0开始，前面的静音是录制启动时间差，自然过渡")
+
+        try:
+            import subprocess
+            import imageio_ffmpeg
+
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            print(f"[合并] FFmpeg路径: {ffmpeg_exe}")
+
+            cmd = [
+                ffmpeg_exe,
+                '-y',
+                '-i', self.video_file_no_audio,
+                '-i', self.audio_file,
+                '-c:v', 'copy',
+                '-c:a', 'copy',
+                self.video_file
+            ]
+
+            print(f"[合并] 执行命令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                print("[合并] 音视频合并成功")
+                if os.path.exists(self.video_file_no_audio):
+                    os.remove(self.video_file_no_audio)
+                    print(f"[合并] 删除临时视频文件")
+                if os.path.exists(self.audio_file):
+                    os.remove(self.audio_file)
+                    print(f"[合并] 删除临时音频文件")
+                if hasattr(self, 'video_timestamps_file') and os.path.exists(self.video_timestamps_file):
+                    os.remove(self.video_timestamps_file)
+                    print(f"[合并] 删除视频时间戳文件")
+                if hasattr(self, 'audio_timestamps_file') and os.path.exists(self.audio_timestamps_file):
+                    os.remove(self.audio_timestamps_file)
+                    print(f"[合并] 删除音频时间戳文件")
+                if os.path.exists(self.video_file):
+                    print(f"[合并] 输出文件已生成: {self.video_file}")
+            else:
+                print(f"[合并] 失败，返回码: {result.returncode}")
+                print(f"[合并] 错误信息: {result.stderr}")
+                print(f"[合并] 标准输出: {result.stdout}")
+                os.rename(self.video_file_no_audio, self.video_file)
+                print(f"[合并] 使用原始无音频视频")
+
+        except Exception as e:
+            print(f"[合并] 异常: {type(e).__name__}: {e}")
+            import traceback
+            print(f"[合并] 异常堆栈: {traceback.format_exc()}")
+            if os.path.exists(self.video_file_no_audio):
+                os.rename(self.video_file_no_audio, self.video_file)
+                print(f"[合并] 使用原始无音频视频")
     
     def save_markers_to_file(self):
         """保存标记信息到会话目录的JSON文件（包含工具校验码）"""
@@ -4634,6 +5019,54 @@ class ScreenRecorder:
     
     def play_video_thread(self):
         print("\n=== 主页面视频播放线程开始 ===")
+        
+        # 创建临时音频文件路径
+        temp_audio_file = self.video_file.replace('.avi', '_temp_audio.wav')
+        audio_available = False
+        pygame = None
+        
+        # 使用FFmpeg提取音频（保持原始采样率）
+        try:
+            import subprocess
+            import imageio_ffmpeg
+            
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            cmd = [
+                ffmpeg_exe,
+                '-y',
+                '-i', self.video_file,
+                '-vn',  # 只提取音频
+                '-acodec', 'pcm_s16le',
+                '-ac', '2',
+                temp_audio_file
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"[音频] 成功提取音频到: {temp_audio_file}")
+                
+                # 初始化pygame音频
+                try:
+                    import pygame as pygame_module
+                    pygame = pygame_module
+                    pygame.mixer.init()
+                    pygame.mixer.music.load(temp_audio_file)
+                    audio_available = True
+                    print("[音频] pygame音频加载成功")
+                    # 不初始化display也能使用mixer，但不能使用event
+                    # 使用get_busy()检测音频是否播放完毕
+                except Exception as e:
+                    print(f"[音频] pygame加载失败: {e}")
+            else:
+                print(f"[音频] 提取音频失败: {result.stderr}")
+                
+        except Exception as e:
+            print(f"[音频] FFmpeg提取失败: {e}")
+        
+        # 保存引用供其他函数使用
+        self.audio_available = audio_available
+        self.pygame = pygame
+        
         self.video_capture = cv2.VideoCapture(self.video_file)
         if not self.video_capture.isOpened():
             messagebox.showerror("错误", "无法打开视频文件")
@@ -4641,30 +5074,82 @@ class ScreenRecorder:
             self.play_btn.config(state=tk.NORMAL)
             self.pause_video_btn.config(state=tk.DISABLED)
             return
+        
         self.stop_video = False
         frame_count = 0
+        fps = self.video_capture.get(cv2.CAP_PROP_FPS)
         print(f"开始播放视频: {self.video_file}")
         
         # 检查是否处于截取视频状态
+        start_offset_sec = 0.0
         if self.clip_mode and self.video_duration > 0:
+            start_offset_sec = self.clip_start
             # 设置视频起始位置为入点
-            start_pos_msec = self.clip_start * 1000
+            start_pos_msec = start_offset_sec * 1000
             with self.video_lock:
                 self.video_capture.set(cv2.CAP_PROP_POS_MSEC, start_pos_msec)
             print(f"截取模式：从 {self.clip_start:.2f} 秒开始播放，到 {self.clip_end:.2f} 秒结束")
         
+        # 初始化时间基准（关键：用于seek后的同步重建）
+        self.playback_base_sec = start_offset_sec
+        # 使用系统时间作为时间基准（避免pygame.time.get_ticks()的问题）
+        self.play_start_time = time.time()
+        
+        # 音频是否已开始播放的标志（避免在音频未开始时误判为结束）
+        audio_started = False
+        
         while self.video_playing and not self.stop_video:
+            # 使用get_busy()检测音频是否播放完毕（避免需要初始化display）
+            # 只有在音频已开始播放后才检测是否结束
+            if audio_started and audio_available and pygame and pygame.mixer.music.get_busy() == False:
+                print("[音频] 音频播放结束")
+                self.video_playing = False
+                break
+            
             if not self.video_paused:
+                # 第一帧时开始播放音频
+                if frame_count == 0 and audio_available and pygame and not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.play(start=start_offset_sec)
+                    audio_started = True
+                    print(f"[音频] 开始播放音频，起始偏移: {start_offset_sec:.2f}秒")
+                
+                # 计算当前播放位置
+                current_playback_sec = 0.0
+                if audio_started and audio_available and pygame and pygame.mixer.music.get_busy():
+                    # 使用pygame的音频位置作为主时钟（最可靠）
+                    audio_pos_ms = pygame.mixer.music.get_pos()
+                    current_playback_sec = start_offset_sec + audio_pos_ms / 1000.0
+                    # 每2秒打印一次同步信息
+                    if int(current_playback_sec) % 2 == 0 and frame_count % 20 == 0:
+                        print(f"[同步] 音频: {audio_pos_ms}ms, 播放: {current_playback_sec:.2f}s")
+                else:
+                    # 没有音频时，使用帧计数计算播放位置
+                    current_playback_sec = frame_count / fps
+                
+                # 只有有音频时才进行跳帧追赶
+                if audio_available and pygame and pygame.mixer.music.get_busy():
+                    # 计算应该显示的帧号
+                    expected_frame = int(current_playback_sec * fps)
+                    
+                    # 如果视频落后太多，快速跳帧追赶
+                    skip_count = 0
+                    while frame_count < expected_frame - 1:
+                        with self.video_lock:
+                            self.video_capture.grab()  # 快速跳过帧
+                        frame_count += 1
+                        skip_count += 1
+                    if skip_count > 5:  # 只在跳过较多帧时打印
+                        print(f"[同步] 跳过 {skip_count} 帧追赶")
+                
                 with self.video_lock:
                     ret, frame = self.video_capture.read()
                     if not ret:
                         print(f"[主页面] 读取帧失败，播放结束")
                         break
-                    # 获取当前播放位置（毫秒）并更新 current_time
-                    current_pos_msec = self.video_capture.get(cv2.CAP_PROP_POS_MSEC)
-                # 只在不在拖动进度条时更新 current_time
+                
+                # 更新当前播放时间（使用时间基准计算的值）
                 if not self.progress_bar_dragging:
-                    self.current_time = current_pos_msec / 1000.0
+                    self.current_time = current_playback_sec
                 
                 # 检查是否处于截取视频状态，如果是，检查是否到达出点
                 if self.clip_mode and self.video_duration > 0:
@@ -4697,17 +5182,34 @@ class ScreenRecorder:
                 self.canvas.imgtk = imgtk
                 self.root.update()
                 
-                # 每10帧更新一次进度条，避免过于频繁的更新
+                # 更新帧计数
                 frame_count += 1
+                
                 if frame_count % 10 == 0:
                     self.update_progress_bar()
                     self.update_time_label()
                 
-                time.sleep(0.05)
+                # 根据计算的播放位置动态调整延迟（保持稳定帧率）
+                target_delay = 1.0 / fps
+                time.sleep(target_delay * 0.8)
             else:
+                # 暂停时暂停音频
+                if audio_available and pygame and pygame.mixer.music.get_busy():
+                    pygame.mixer.music.pause()
                 time.sleep(0.1)
         
         print(f"[主页面] 播放循环结束，frame_count={frame_count}")
+        
+        # 停止音频播放
+        if audio_available and pygame:
+            pygame.mixer.music.stop()
+            pygame.mixer.quit()
+            print("[音频] 音频播放停止")
+        
+        # 删除临时音频文件
+        if os.path.exists(temp_audio_file):
+            os.remove(temp_audio_file)
+            print(f"[音频] 删除临时音频文件: {temp_audio_file}")
         
         if self.video_capture:
             with self.video_lock:
@@ -4779,17 +5281,29 @@ class ScreenRecorder:
                 self.show_time_tooltip(event.x, event.y, self.current_time)
                 self.update_progress_bar()
                 self.update_time_label()
-                # 同步视频位置到拖动位置
-                with self.video_lock:
-                    if self.video_playing and self.video_capture:
-                        self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
+                # 拖动过程中只更新UI，不写播放器（避免频繁seek导致同步问题）
     
     def on_progress_release(self, event):
         if self.progress_bar_dragging:
             self.progress_bar_dragging = False
+            target_sec = self.current_time
+            
+            # 更新视频位置
             with self.video_lock:
                 if self.video_playing and self.video_capture:
-                    self.video_capture.set(cv2.CAP_PROP_POS_MSEC, self.current_time * 1000)
+                    self.video_capture.set(cv2.CAP_PROP_POS_MSEC, target_sec * 1000)
+            
+            # 同步音频位置到拖动位置
+            if hasattr(self, 'audio_available') and self.audio_available:
+                if hasattr(self, 'pygame') and self.pygame:
+                    try:
+                        # 停止当前播放并从新位置开始
+                        self.pygame.mixer.music.stop()
+                        self.pygame.mixer.music.play(start=target_sec)
+                        print(f"[音频] seek到: {target_sec:.2f}秒")
+                    except Exception as e:
+                        print(f"[音频] seek失败: {e}")
+            
             # 销毁时间提示窗口
             if hasattr(self, 'time_tooltip') and self.time_tooltip:
                 try:
