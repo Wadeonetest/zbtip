@@ -51,11 +51,23 @@ class DatabaseManager:
                 remaining_marks INTEGER DEFAULT 0,
                 status INTEGER DEFAULT 1,
                 inviter_id INTEGER DEFAULT NULL,
+                distribution_link TEXT,
+                distribution_link_id TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (inviter_id) REFERENCES users(id)
             )
         ''')
+        
+        # 为已存在的表添加新字段（如果不存在）
+        try:
+            cursor.execute('ALTER TABLE users ADD COLUMN distribution_link TEXT')
+        except Exception:
+            pass
+        try:
+            cursor.execute('ALTER TABLE users ADD COLUMN distribution_link_id TEXT')
+        except Exception:
+            pass
 
         # 创建 vip_purchases 表
         cursor.execute('''
@@ -715,7 +727,107 @@ try:
 except ImportError:
     IMAGEIO_FFMPEG_AVAILABLE = False
 
+# ============================================================
+# API限流框架（预留，为后续接入服务器做准备）
+# ============================================================
+# 限流配置：10次/分钟
+API_RATE_LIMIT_CONFIG = {
+    "max_requests": 10,      # 最大请求次数
+    "window_seconds": 60,   # 时间窗口（秒）
+    "recovery_seconds": 30   # 固定恢复时间（秒）
+}
+
+# 用户API请求时间记录（预留）
+# 结构: {user_id: {"requests": [时间戳列表], "locked_until": None/时间戳}}
+_api_request_cache = {}
+
+def check_api_rate_limit(user_id, operation_name="default"):
+    """
+    检查API请求是否超过限流阈值
+    
+    Args:
+        user_id: 用户ID
+        operation_name: 操作名称（用于区分不同操作的限流）
+    
+    Returns:
+        tuple: (is_allowed, remaining_requests, retry_after_seconds)
+    """
+    cache_key = f"{user_id}_{operation_name}"
+    current_time = time.time()
+    
+    if cache_key not in _api_request_cache:
+        _api_request_cache[cache_key] = {
+            "requests": [],
+            "locked_until": None
+        }
+    
+    cache = _api_request_cache[cache_key]
+    
+    # 检查是否被锁定
+    if cache["locked_until"] is not None:
+        if current_time < cache["locked_until"]:
+            retry_after = int(cache["locked_until"] - current_time)
+            return False, 0, retry_after
+        else:
+            # 锁已过期，重置状态
+            cache["requests"] = []
+            cache["locked_until"] = None
+    
+    # 清理超过时间窗口的请求记录
+    window_start = current_time - API_RATE_LIMIT_CONFIG["window_seconds"]
+    cache["requests"] = [t for t in cache["requests"] if t > window_start]
+    
+    # 检查是否超过阈值
+    remaining = API_RATE_LIMIT_CONFIG["max_requests"] - len(cache["requests"])
+    
+    if remaining <= 0:
+        # 触发限流，锁定30秒
+        cache["locked_until"] = current_time + API_RATE_LIMIT_CONFIG["recovery_seconds"]
+        return False, 0, API_RATE_LIMIT_CONFIG["recovery_seconds"]
+    
+    # 记录这次请求
+    cache["requests"].append(current_time)
+    return True, remaining - 1, 0
+
+def get_rate_limit_status(user_id, operation_name="default"):
+    """
+    获取当前限流状态（不触发计数）
+    
+    Returns:
+        dict: {"remaining": 剩余次数, "locked": 是否被锁定, "retry_after": 剩余锁定时间}
+    """
+    cache_key = f"{user_id}_{operation_name}"
+    current_time = time.time()
+    
+    if cache_key not in _api_request_cache:
+        return {"remaining": API_RATE_LIMIT_CONFIG["max_requests"], "locked": False, "retry_after": 0}
+    
+    cache = _api_request_cache[cache_key]
+    
+    # 检查是否被锁定
+    if cache["locked_until"] is not None:
+        if current_time < cache["locked_until"]:
+            return {
+                "remaining": 0,
+                "locked": True,
+                "retry_after": int(cache["locked_until"] - current_time)
+            }
+        else:
+            return {"remaining": API_RATE_LIMIT_CONFIG["max_requests"], "locked": False, "retry_after": 0}
+    
+    # 清理超过时间窗口的请求记录
+    window_start = current_time - API_RATE_LIMIT_CONFIG["window_seconds"]
+    cache["requests"] = [t for t in cache["requests"] if t > window_start]
+    
+    return {
+        "remaining": API_RATE_LIMIT_CONFIG["max_requests"] - len(cache["requests"]),
+        "locked": False,
+        "retry_after": 0
+    }
+
+# ============================================================
 # 尝试导入watchdog库用于文件系统监控
+# ============================================================
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
