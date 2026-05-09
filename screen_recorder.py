@@ -1714,6 +1714,9 @@ class ScreenRecorder:
         
         progress = current / total if total > 0 else 0
         
+        if not self.recording:
+            print(f"\n[缩略功能区进度条调试] current_time={current:.2f}s, video_duration={self.video_duration:.2f}s, total={total:.2f}s")
+        
         # 绘制背景
         canvas.create_rectangle(0, 0, width, height, fill="#2a2a2a", outline="")
         
@@ -2649,7 +2652,7 @@ class ScreenRecorder:
 
         # 设置视频文件路径（临时，不含音频）
         self.video_file_no_audio = os.path.join(self.current_session_dir, f"recording_{timestamp}_no_audio.avi")
-        self.recorder = cv2.VideoWriter(self.video_file_no_audio, cv2.VideoWriter_fourcc(*'XVID'), 10.0, (self.width, self.height))
+        # 现在不在录制时写入，而是结束后重新编码
         print(f"[录屏] 视频文件路径: {self.video_file_no_audio}")
 
         # 设置音频文件路径
@@ -2746,12 +2749,11 @@ class ScreenRecorder:
         self.stop_update = True
         if self.update_thread:
             self.update_thread.join(timeout=1)
-        if self.recorder:
-            self.recorder.release()
+        # self.recorder.release()  # 现在不需要这个了
 
         # 等待录屏线程结束
         if hasattr(self, 'record_thread') and self.record_thread:
-            self.record_thread.join(timeout=2)
+            self.record_thread.join(timeout=30)  # 增加到30秒，给重编码足够时间
 
         # 等待音频线程结束
         if hasattr(self, 'audio_thread') and self.audio_thread:
@@ -3321,40 +3323,131 @@ class ScreenRecorder:
         self.clip_btn.config(state=tk.NORMAL)
     
     def record_screen(self):
-        target_fps = 10.0
+        target_fps = 30.0  # 目标帧率，仅用于控制录制节奏
         frame_interval = 1.0 / target_fps
         next_frame_time = time.perf_counter()
         frame_count = 0
 
         video_timestamps = []
+        recorded_frames = []  # 保存所有帧
+        
+        # 优化：使用mss截图（比pyautogui快3-5倍）
+        import mss
+        with mss.mss() as sct:
+            monitor = {"left": self.x, "top": self.y, "width": self.width, "height": self.height}
+            
+            while self.recording:
+                if not self.paused:
+                    frame_start_time = time.perf_counter()
+                    
+                    # 使用mss截图（比pyautogui快3-5倍）
+                    sct_img = sct.grab(monitor)
+                    
+                    # mss返回的是BGRA格式，正确转换为BGR格式
+                    frame = np.array(sct_img)
+                    frame = frame[:, :, :3]  # 去掉alpha通道，得到BGR
+                    
+                    # 保存帧而不是直接写入
+                    recorded_frames.append(frame.copy())
+                    
+                    pts = frame_start_time - self._master_clock_start
+                    video_timestamps.append((frame_count, pts, frame_start_time))
 
-        while self.recording:
-            if not self.paused:
-                frame_start_time = time.perf_counter()
-                screenshot = pyautogui.screenshot(region=(self.x, self.y, self.width, self.height))
-                frame = np.array(screenshot)
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                self.recorder.write(frame)
+                    self.recorded_frames += 1
+                    frame_count += 1
 
-                pts = frame_start_time - self._master_clock_start
-                video_timestamps.append((frame_count, pts, frame_start_time))
+                    next_frame_time += frame_interval
 
-                self.recorded_frames += 1
-                frame_count += 1
+                    current_time = time.perf_counter()
+                    sleep_time = next_frame_time - current_time
 
-                next_frame_time += frame_interval
-
-                current_time = time.perf_counter()
-                sleep_time = next_frame_time - current_time
-
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-            else:
-                next_frame_time = time.perf_counter()
-                time.sleep(0.1)
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                else:
+                    next_frame_time = time.perf_counter()
+                    time.sleep(0.05)  # 暂停时减少sleep时间，更快响应恢复
 
         self._video_timestamps = video_timestamps
         self._save_video_timestamps()
+        
+        # 录制结束后，按时间戳重新编码视频，保证时长正确
+        self._encode_video_from_frames(recorded_frames, video_timestamps)
+    
+    def _encode_video_from_frames(self, frames, timestamps):
+        """按时间戳重新编码视频，保证时长正确"""
+        if not frames or not timestamps:
+            return
+            
+        print(f"\n===== [重编码调试] =====")
+        print(f"[重编码] 帧数: {len(frames)}, timestamps数: {len(timestamps)}")
+        
+        # 计算真实的录制时长
+        # timestamps里的pts已经是相对于_master_clock_start的
+        first_pts = timestamps[0][1]
+        last_pts = timestamps[-1][1]
+        total_duration_pts = last_pts - first_pts
+        
+        first_wall = timestamps[0][2]
+        last_wall = timestamps[-1][2]
+        total_duration_wall = last_wall - first_wall
+        
+        print(f"[重编码] first_pts={first_pts:.2f}, last_pts={last_pts:.2f}, duration_pts={total_duration_pts:.2f}s")
+        print(f"[重编码] first_wall={first_wall:.2f}, last_wall={last_wall:.2f}, duration_wall={total_duration_wall:.2f}s")
+        
+        # 直接用pts计算的时长，不要max！
+        total_duration = total_duration_pts
+        print(f"[重编码] 最终使用时长: {total_duration:.2f}秒")
+        
+        # 计算应有的帧数
+        target_fps = 30.0
+        target_frames = int(round(total_duration * target_fps))  # 用round更准确！
+        
+        print(f"[重编码] 目标帧数: {target_frames} (帧率: {target_fps} fps)")
+        
+        # 用正确的时长和帧率创建新的VideoWriter
+        temp_video_file = self.video_file_no_audio + "_temp.avi"
+        out = cv2.VideoWriter(temp_video_file, cv2.VideoWriter_fourcc(*'XVID'), target_fps, (self.width, self.height))
+        
+        if not out.isOpened():
+            print(f"[重编码] 无法创建重编码输出文件")
+            return
+        
+        # 生成均匀的时间戳序列
+        import numpy as np
+        target_pts = np.linspace(first_pts, last_pts, target_frames)
+        
+        print(f"[重编码] 目标时间戳范围: {target_pts[0]:.2f} ~ {target_pts[-1]:.2f}")
+        
+        # 简单的帧插值策略：复制上一帧
+        current_frame_idx = 0
+        for i in range(target_frames):
+            # 找到最接近目标时间戳的帧
+            while current_frame_idx < len(timestamps) - 1 and timestamps[current_frame_idx + 1][1] < target_pts[i]:
+                current_frame_idx += 1
+            
+            if i % 100 == 0:  # 只打印部分，避免刷屏
+                print(f"[重编码] 写帧 {i}/{target_frames} -> 原始帧 {current_frame_idx}/{len(frames)}")
+            
+            frame = frames[current_frame_idx]
+            out.write(frame)
+        
+        out.release()
+        print(f"[重编码] 重编码完成，写入 {target_frames} 帧")
+        
+        # 替换原文件
+        try:
+            os.replace(temp_video_file, self.video_file_no_audio)
+            print(f"[重编码] 已替换原文件: {self.video_file_no_audio}")
+            # 保存真实录制时长，供 calculate_video_duration 使用！
+            self._real_recorded_duration = total_duration
+            print(f"[重编码] 已保存真实录制时长: {self._real_recorded_duration:.2f}秒")
+        except Exception as e:
+            print(f"[重编码] 替换文件失败: {e}")
+            try:
+                os.remove(temp_video_file)
+            except:
+                pass
+        print(f"===== [重编码调试结束] =====\n")
 
     def _save_video_timestamps(self):
         try:
@@ -3864,19 +3957,33 @@ class ScreenRecorder:
             return False, "片段签名文件格式错误", None
     
     def calculate_video_duration(self):
+        print(f"\n===== [计算视频时长] =====")
+        # 如果重编码时已经保存了真实录制时长，优先用那个！
+        if hasattr(self, '_real_recorded_duration') and self._real_recorded_duration > 0:
+            self.video_duration = self._real_recorded_duration
+            print(f"[计算视频时长] 使用重编码保存的真实时长: {self.video_duration:.2f}秒")
+            print(f"===== [计算视频时长结束] =====\n")
+            return
+        
+        # 如果没有，才从文件读取
         if self.video_file:
+            print(f"[计算视频时长] 从文件读取: {self.video_file}")
             cap = cv2.VideoCapture(self.video_file)
             if cap.isOpened():
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
                 if fps > 0:
                     self.video_duration = frame_count / fps
-                    print(f"[视频时长计算] 文件: {self.video_file}")
-                    print(f"[视频时长计算] FPS: {fps}, 帧数: {frame_count}")
-                    print(f"[视频时长计算] 计算时长: {self.video_duration:.2f}秒")
+                    print(f"[计算视频时长] 文件: {self.video_file}")
+                    print(f"[计算视频时长] FPS: {fps}, 帧数: {frame_count}")
+                    print(f"[计算视频时长] 计算时长: {self.video_duration:.2f}秒")
                 cap.release()
+        print(f"===== [计算视频时长结束] =====\n")
     
     def update_progress_bar(self):
+        if not self.recording:
+            print(f"\n[主页面进度条调试] current_time={self.current_time:.2f}s, video_duration={self.video_duration:.2f}s")
+        
         self.progress_canvas.delete('all')
         width = self.progress_canvas.winfo_width()
         height = self.progress_canvas.winfo_height()
