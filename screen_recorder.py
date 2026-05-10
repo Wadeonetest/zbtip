@@ -4012,18 +4012,13 @@ class ScreenRecorder:
         # 绘制黄色标记（在进度条上方）- 水滴形
         if self.recording or self.video_duration > 0:
             # 在录制模式下，使用 current_time 作为总时长
-            # 在播放模式下，使用 video_duration 或所有标记的最大时间
-            max_marker_time = 0
+            # 在播放模式下，使用 video_duration（只由视频文件决定，不受标记影响！）
             if self.recording:
                 total_duration = self.current_time if self.current_time > 0 else 1
             else:
-                # 如果 video_duration 为0或小于任何标记的时间，使用标记的最大时间
-                max_marker_time = max([m["time"] for m in self.markers]) if self.markers else 0
-                if self.video_duration <= 0 or self.video_duration < max_marker_time:
-                    total_duration = max_marker_time if max_marker_time > 0 else 1
-                else:
-                    total_duration = self.video_duration
-            print(f"[调试] 绘制标记: 录制模式={self.recording}, video_duration={self.video_duration:.2f}, max_marker_time={max_marker_time:.2f}, total_duration={total_duration:.2f}, 标记数量={len(self.markers)}")
+                # 修复：视频总时长只由 video_duration 决定，标记不能影响时长！
+                total_duration = self.video_duration if self.video_duration > 0 else 1
+            print(f"[调试] 绘制标记: 录制模式={self.recording}, video_duration={self.video_duration:.2f}, total_duration={total_duration:.2f}, 标记数量={len(self.markers)}")
             if total_duration > 0:
                 for idx, marker in enumerate(self.markers):
                     marker_time = marker["time"]
@@ -4214,10 +4209,15 @@ class ScreenRecorder:
     def update_progress(self):
         while not self.stop_update:
             if self.recording:
-                # 录屏时：根据实际录制帧数计算时间，确保与视频时长一致
+                # 录屏时：根据实际流逝时间计算，确保与视频时长一致
                 if not self.paused:
-                    # 使用实际录制帧数计算时间（10fps，与VideoWriter设置一致）
-                    self.current_time = self.recorded_frames / 10.0
+                    # 使用实际流逝时间计算（避免用固定fps导致的时间错误！）
+                    if hasattr(self, 'recording_start_time') and self.recording_start_time > 0:
+                        elapsed = time.time() - self.recording_start_time
+                        # 减去暂停时间
+                        if hasattr(self, 'paused_time_total') and self.paused_time_total > 0:
+                            elapsed -= self.paused_time_total
+                        self.current_time = max(0, elapsed)
             elif self.video_duration > 0 and self.video_playing and not self.progress_bar_dragging:
                 if not self.video_paused:
                     self.current_time += 0.1
