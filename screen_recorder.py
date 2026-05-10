@@ -924,6 +924,8 @@ class ScreenRecorder:
         self.progress_knob_id = None
         self.progress_bar_dragging = False
         self.video_lock = threading.Lock()  # 视频操作锁，防止多线程冲突
+        self.merging_in_progress = False  # 合并任务是否正在进行中
+        self.merge_completed = False  # 合并任务是否已完成
         
         # 音视频同步时间基准变量
         self.playback_base_sec = 0.0
@@ -2749,41 +2751,207 @@ class ScreenRecorder:
         self.stop_update = True
         if self.update_thread:
             self.update_thread.join(timeout=1)
-        # self.recorder.release()  # 现在不需要这个了
 
-        # 等待录屏线程结束
+        # 等待录屏线程结束（现在重编码已移到后台，不需要等待30秒）
         if hasattr(self, 'record_thread') and self.record_thread:
-            self.record_thread.join(timeout=30)  # 增加到30秒，给重编码足够时间
+            self.record_thread.join(timeout=2)
 
         # 等待音频线程结束
         if hasattr(self, 'audio_thread') and self.audio_thread:
             self.audio_thread.join(timeout=2)
-
-        # 合并音视频
-        self.merge_audio_video()
 
         # 关闭缩略功能区
         self.close_mini_control()
 
         # 恢复主窗口
         self.root.deiconify()
-
-        if self.video_file and os.path.exists(self.video_file):
-            # 计算视频实际时长
-            self.calculate_video_duration()
-
-            # 保存当前视频的标记和片段
-            self.video_markers[self.video_file] = self.markers.copy()
-            self.video_clips[self.video_file] = self.clips.copy()
-
-            # 保存 markers.json（即使没有标记也要保存，用于工具校验）
-            self.save_markers_to_file()
-
-            self.play_btn.config(state=tk.NORMAL)
-            self.show_notification("录屏完成", is_weak=True)
-            self.save_recording_path()
-            # 显示视频第一帧
-            self.show_first_frame()
+        self.root.update()  # 立即更新窗口状态
+        
+        # 在后台线程中异步处理：先重编码视频，再合并音视频（不阻塞UI！）
+        self.merging_in_progress = True
+        self.merge_completed = False
+        
+        # 显示置顶提示
+        if hasattr(self, 'merging_window') and self.merging_window:
+            try:
+                self.merging_window.destroy()
+            except:
+                pass
+        
+        # 获取canvas的屏幕位置
+        self.root.update_idletasks()
+        canvas_x = self.canvas.winfo_rootx()
+        canvas_y = self.canvas.winfo_rooty()
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        
+        # 计算提示窗口位置（canvas正中间）
+        window_width = 200
+        window_height = 60
+        pos_x = canvas_x + (canvas_w - window_width) // 2
+        pos_y = canvas_y + (canvas_h - window_height) // 2
+        
+        self.merging_window = tk.Toplevel(self.root)
+        self.merging_window.title("提示")
+        self.merging_window.geometry(f"{window_width}x{window_height}+{pos_x}+{pos_y}")
+        self.merging_window.resizable(False, False)
+        self.merging_window.attributes('-topmost', True)
+        self.merging_window.configure(bg='#1a1a2e')
+        self.merging_window.overrideredirect(True)
+        
+        label = tk.Label(
+            self.merging_window,
+            text="视频生成中...",
+            bg='#1a1a2e',
+            fg='white',
+            font=('Arial', 14, 'bold')
+        )
+        label.pack(expand=True)
+        
+        # 先保存状态，再启动线程
+        self._save_merge_state(True)
+        
+        def async_process():
+            print("[后台处理] 开始异步处理视频...")
+            
+            # 步骤1：视频重编码（如果有未处理的帧）
+            if hasattr(self, '_recorded_frames') and self._recorded_frames:
+                print("[后台处理] 开始视频重编码...")
+                self._encode_video_from_frames(self._recorded_frames, self._pending_timestamps)
+                # 清理临时数据
+                delattr(self, '_recorded_frames')
+                delattr(self, '_pending_timestamps')
+                print("[后台处理] 视频重编码完成")
+            
+            # 步骤2：音视频合并
+            print("[后台处理] 开始音视频合并...")
+            self.merge_audio_video()
+            print("[后台处理] 音视频合并完成")
+            
+            self.merging_in_progress = False
+            self.merge_completed = True
+            self._save_merge_state(False)  # 完成后清除状态
+            print("[后台处理] 所有处理完成！")
+            
+            # 处理完成后，通知主线程更新UI
+            def update_ui_after_process():
+                if self.video_file and os.path.exists(self.video_file):
+                    self.calculate_video_duration()
+                    self.video_markers[self.video_file] = self.markers.copy()
+                    self.video_clips[self.video_file] = self.clips.copy()
+                    self.save_markers_to_file()
+                    self.play_btn.config(state=tk.NORMAL)
+                    self.show_notification("录屏完成", is_weak=True)
+                    self.save_recording_path()
+                    self.show_first_frame()
+            
+            # 在主线程中更新UI
+            self.root.after(0, update_ui_after_process)
+        
+        threading.Thread(target=async_process, daemon=True).start()
+        
+        # 禁用播放按钮（合并完成前不能播放）
+        self.play_btn.config(state=tk.DISABLED)
+        self.show_notification("正在后台处理视频...", is_weak=True)
+    
+    def _save_merge_state(self, in_progress):
+        """保存合并状态到文件，以便工具重启后可以继续"""
+        try:
+            state_file = os.path.join(self.current_session_dir, "merge_state.json")
+            if in_progress:
+                state = {
+                    "in_progress": True,
+                    "video_file_no_audio": self.video_file_no_audio,
+                    "audio_file": self.audio_file,
+                    "video_file": self.video_file,
+                    "session_dir": self.current_session_dir
+                }
+                with open(state_file, 'w', encoding='utf-8') as f:
+                    json.dump(state, f, ensure_ascii=False, indent=2)
+                print(f"[状态] 已保存合并状态到: {state_file}")
+            else:
+                # 清除状态文件
+                if os.path.exists(state_file):
+                    os.remove(state_file)
+                    print(f"[状态] 已清除合并状态")
+        except Exception as e:
+            print(f"[状态] 保存/清除状态失败: {e}")
+    
+    def _check_and_resume_merge(self):
+        """检查并恢复未完成的合并任务（扫描所有录制文件夹）"""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        recordings_base = os.path.join(base_dir, self.recordings_dir)
+        
+        # 检查当前会话
+        if hasattr(self, 'current_session_dir') and self.current_session_dir:
+            state_file = os.path.join(self.current_session_dir, "merge_state.json")
+            if os.path.exists(state_file):
+                try:
+                    with open(state_file, 'r', encoding='utf-8') as f:
+                        state = json.load(f)
+                    print(f"[状态] 检测到未完成的合并任务: {state}")
+                    return state
+                except Exception as e:
+                    print(f"[状态] 加载状态失败: {e}")
+                    if os.path.exists(state_file):
+                        os.remove(state_file)
+        
+        # 扫描所有录制文件夹
+        if os.path.exists(recordings_base):
+            try:
+                for item in os.listdir(recordings_base):
+                    folder = os.path.join(recordings_base, item)
+                    if os.path.isdir(folder):
+                        state_file = os.path.join(folder, "merge_state.json")
+                        if os.path.exists(state_file):
+                            try:
+                                with open(state_file, 'r', encoding='utf-8') as f:
+                                    state = json.load(f)
+                                print(f"[状态] 检测到未完成的合并任务: {state}")
+                                return state
+                            except Exception as e:
+                                print(f"[状态] 加载状态失败: {e}")
+                                if os.path.exists(state_file):
+                                    os.remove(state_file)
+            except Exception as e:
+                print(f"[状态] 扫描录制文件夹失败: {e}")
+        
+        return None
+    
+    def _resume_merge_from_state(self, state):
+        """从保存的状态恢复合并任务"""
+        print(f"[恢复] 开始恢复合并任务...")
+        
+        # 先检查是否已经有最终文件了
+        if os.path.exists(state["video_file"]):
+            print(f"[恢复] 视频已存在，跳过合并")
+            self.video_file = state["video_file"]
+            self._save_merge_state(False)
+            return True
+        
+        # 检查无音频视频和音频文件
+        if not os.path.exists(state["video_file_no_audio"]):
+            print(f"[恢复] 无音频视频文件不存在: {state['video_file_no_audio']}")
+            self._save_merge_state(False)
+            return False
+        
+        # 设置文件路径
+        self.video_file_no_audio = state["video_file_no_audio"]
+        self.audio_file = state["audio_file"]
+        self.video_file = state["video_file"]
+        self.current_session_dir = state["session_dir"]
+        
+        # 执行合并
+        self.merging_in_progress = True
+        self.merge_audio_video()
+        self.merging_in_progress = False
+        self._save_merge_state(False)
+        
+        return True
+    
+    def _on_resume_complete(self, success):
+        """恢复合并任务完成的回调（仅用于内部调用）"""
+        print(f"[回调] 恢复完成: {success}")
     
     def open_video_location(self):
         """打开视频文件所在的目录并选中该文件"""
@@ -3192,7 +3360,55 @@ class ScreenRecorder:
         """显示视频的第一帧画面"""
         if not self.video_file or not os.path.exists(self.video_file):
             return
-
+        
+        # 检查是否正在合并中
+        if self.merging_in_progress:
+            self.play_btn.config(state=tk.DISABLED)
+            
+            # 清除之前的提示
+            if hasattr(self, 'merging_window') and self.merging_window:
+                try:
+                    self.merging_window.destroy()
+                except:
+                    pass
+            
+            # 创建置顶提示窗口
+            self.merging_window = tk.Toplevel(self.root)
+            self.merging_window.title("提示")
+            self.merging_window.geometry("200x60")
+            self.merging_window.resizable(False, False)
+            self.merging_window.attributes('-topmost', True)  # 置顶
+            self.merging_window.configure(bg='#1a1a2e')
+            self.merging_window.overrideredirect(True)  # 无边框
+            
+            # 居中显示在视频预览区域
+            self.merging_window.update_idletasks()
+            preview_x = self.root.winfo_x() + 400
+            preview_y = self.root.winfo_y() + 100
+            self.merging_window.geometry(f"200x60+{preview_x}+{preview_y}")
+            
+            label = tk.Label(
+                self.merging_window,
+                text="视频生成中...",
+                bg='#1a1a2e',
+                fg='white',
+                font=('Arial', 14, 'bold')
+            )
+            label.pack(expand=True)
+            
+            return
+        
+        # 清除合并提示
+        if hasattr(self, 'merging_window') and self.merging_window:
+            try:
+                self.merging_window.destroy()
+            except:
+                pass
+            self.merging_window = None
+        
+        # 启用播放按钮
+        self.play_btn.config(state=tk.NORMAL)
+        
         # 计算视频时长
         self.calculate_video_duration()
         
@@ -3370,8 +3586,9 @@ class ScreenRecorder:
         self._video_timestamps = video_timestamps
         self._save_video_timestamps()
         
-        # 录制结束后，按时间戳重新编码视频，保证时长正确
-        self._encode_video_from_frames(recorded_frames, video_timestamps)
+        # 将重编码放到后台线程执行，让录制线程尽快结束
+        self._recorded_frames = recorded_frames
+        self._pending_timestamps = video_timestamps
     
     def _encode_video_from_frames(self, frames, timestamps):
         """按时间戳重新编码视频，保证时长正确"""
@@ -3381,8 +3598,6 @@ class ScreenRecorder:
         print(f"\n===== [重编码调试] =====")
         print(f"[重编码] 帧数: {len(frames)}, timestamps数: {len(timestamps)}")
         
-        # 计算真实的录制时长
-        # timestamps里的pts已经是相对于_master_clock_start的
         first_pts = timestamps[0][1]
         last_pts = timestamps[-1][1]
         total_duration_pts = last_pts - first_pts
@@ -3394,17 +3609,14 @@ class ScreenRecorder:
         print(f"[重编码] first_pts={first_pts:.2f}, last_pts={last_pts:.2f}, duration_pts={total_duration_pts:.2f}s")
         print(f"[重编码] first_wall={first_wall:.2f}, last_wall={last_wall:.2f}, duration_wall={total_duration_wall:.2f}s")
         
-        # 直接用pts计算的时长，不要max！
         total_duration = total_duration_pts
         print(f"[重编码] 最终使用时长: {total_duration:.2f}秒")
         
-        # 计算应有的帧数
         target_fps = 30.0
-        target_frames = int(round(total_duration * target_fps))  # 用round更准确！
+        target_frames = int(round(total_duration * target_fps))
         
         print(f"[重编码] 目标帧数: {target_frames} (帧率: {target_fps} fps)")
         
-        # 用正确的时长和帧率创建新的VideoWriter
         temp_video_file = self.video_file_no_audio + "_temp.avi"
         out = cv2.VideoWriter(temp_video_file, cv2.VideoWriter_fourcc(*'XVID'), target_fps, (self.width, self.height))
         
@@ -3412,20 +3624,17 @@ class ScreenRecorder:
             print(f"[重编码] 无法创建重编码输出文件")
             return
         
-        # 生成均匀的时间戳序列
         import numpy as np
         target_pts = np.linspace(first_pts, last_pts, target_frames)
         
         print(f"[重编码] 目标时间戳范围: {target_pts[0]:.2f} ~ {target_pts[-1]:.2f}")
         
-        # 简单的帧插值策略：复制上一帧
         current_frame_idx = 0
         for i in range(target_frames):
-            # 找到最接近目标时间戳的帧
             while current_frame_idx < len(timestamps) - 1 and timestamps[current_frame_idx + 1][1] < target_pts[i]:
                 current_frame_idx += 1
             
-            if i % 100 == 0:  # 只打印部分，避免刷屏
+            if i % 100 == 0:
                 print(f"[重编码] 写帧 {i}/{target_frames} -> 原始帧 {current_frame_idx}/{len(frames)}")
             
             frame = frames[current_frame_idx]
@@ -3434,11 +3643,9 @@ class ScreenRecorder:
         out.release()
         print(f"[重编码] 重编码完成，写入 {target_frames} 帧")
         
-        # 替换原文件
         try:
             os.replace(temp_video_file, self.video_file_no_audio)
             print(f"[重编码] 已替换原文件: {self.video_file_no_audio}")
-            # 保存真实录制时长，供 calculate_video_duration 使用！
             self._real_recorded_duration = total_duration
             print(f"[重编码] 已保存真实录制时长: {self._real_recorded_duration:.2f}秒")
         except Exception as e:
@@ -5103,6 +5310,51 @@ class ScreenRecorder:
                 self.show_notification("片段删除成功", is_weak=True)
     
     def play_video(self):
+        # 检查是否有未完成的合并任务（从文件恢复）
+        state = self._check_and_resume_merge()
+        if state:
+            # 发现未完成的任务，需要恢复合并
+            self.show_notification("发现未完成的视频处理，正在恢复...", is_weak=False)
+            print("[播放] 发现未完成的合并任务，正在恢复...")
+            
+            # 在后台线程恢复合并任务
+            def resume_merge_thread():
+                success = self._resume_merge_from_state(state)
+                self.root.after(0, lambda: self._on_resume_complete(success))
+            
+            threading.Thread(target=resume_merge_thread, daemon=True).start()
+            
+            # 简单等待合并完成（避免复杂状态管理）
+            self.show_notification("正在处理视频，请稍候...", is_weak=False)
+            # 给一点时间让线程开始
+            time.sleep(0.2)
+            # 等待直到有最终视频文件
+            wait_count = 0
+            max_wait = 300  # 最多等5分钟
+            while not os.path.exists(state["video_file"]) and wait_count < max_wait:
+                time.sleep(0.5)
+                wait_count += 1
+            
+            if os.path.exists(state["video_file"]):
+                self.video_file = state["video_file"]
+                self.current_session_dir = state["session_dir"]
+                self.show_notification("视频处理完成，开始播放", is_weak=True)
+                print("[播放] 合并已完成，开始播放")
+            else:
+                self.show_notification("视频处理失败", is_weak=True)
+                print("[播放] 合并失败")
+                return
+        
+        # 检查是否正在合并中
+        if self.merging_in_progress:
+            self.show_notification("正在等待视频处理完成...", is_weak=False)
+            print("[播放] 等待合并完成...")
+            while self.merging_in_progress:
+                time.sleep(0.1)
+            
+            self.show_notification("视频处理完成，开始播放", is_weak=True)
+            print("[播放] 合并已完成，开始播放")
+        
         if self.video_file:
             # 如果处于暂停状态，只取消暂停，继续播放（不从头开始）
             if self.video_playing and self.video_paused:
@@ -7219,6 +7471,26 @@ class ScreenRecorder:
             self.marker_tooltip.destroy()
             self.marker_tooltip = None
     
+    def on_window_close(self):
+        """窗口关闭时的处理"""
+        print("[关闭] 检测到窗口关闭...")
+        
+        # 如果正在合并，等待合并完成
+        if self.merging_in_progress:
+            print("[关闭] 正在等待合并完成...")
+            self.show_notification("正在保存视频，请稍候...", is_weak=False)
+            while self.merging_in_progress:
+                time.sleep(0.1)
+            print("[关闭] 合并已完成")
+        
+        # 如果正在录屏，停止录屏
+        if self.recording:
+            print("[关闭] 正在停止录屏...")
+            self.stop_recording()
+        
+        # 销毁窗口
+        self.root.destroy()
+    
     def extract_clip_with_cv2(self, clip, clip_path, fps, width, height):
         """使用cv2方式提取视频片段（回退方案）"""
         cap = cv2.VideoCapture(self.video_file)
@@ -7258,4 +7530,6 @@ if __name__ == "__main__":
     from PIL import Image, ImageTk
     root = tk.Tk()
     app = ScreenRecorder(root)
+    # 设置窗口关闭处理
+    root.protocol("WM_DELETE_WINDOW", app.on_window_close)
     root.mainloop()
