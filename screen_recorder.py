@@ -859,7 +859,7 @@ except ImportError:
 class ScreenRecorder:
     def __init__(self, root):
         self.root = root
-        self.root.title("直播录屏标记助手")
+        self.root.title("直播录屏标记精灵")
         
         # 设置窗口图标
         import os
@@ -1240,7 +1240,7 @@ class ScreenRecorder:
         title_content_frame = tk.Frame(title_frame, bg=self.card_bg)
         title_content_frame.pack(side=tk.LEFT, anchor=tk.CENTER, fill=tk.Y)
         
-        title_label = tk.Label(title_content_frame, text="直播录屏标记助手", 
+        title_label = tk.Label(title_content_frame, text="直播录屏标记精灵", 
                 font=('STKaiti', 18, 'bold'),
                 bg=self.card_bg, fg='#2ecc71')
         title_label.pack(side=tk.TOP, anchor=tk.W)
@@ -1995,7 +1995,7 @@ class ScreenRecorder:
         about_card.pack(fill=tk.BOTH, expand=True, padx=20)
         
         # 软件名称
-        name_label = tk.Label(about_card, text="直播录屏标记助手",
+        name_label = tk.Label(about_card, text="直播录屏标记精灵",
                              font=('Arial', 16, 'bold'),
                              bg=self.card_bg, fg=self.accent_color)
         name_label.pack(pady=(0, 10))
@@ -2069,7 +2069,7 @@ class ScreenRecorder:
         
         # 版权信息
         copyright_label = tk.Label(page, 
-                                 text="© 2024 直播录屏标记助手 版权所有",
+                                 text="© 2024 直播录屏标记精灵 版权所有",
                                  font=('Arial', 9),
                                  bg=self.bg_color, fg=self.secondary_text,
                                  pady=20)
@@ -2759,6 +2759,11 @@ class ScreenRecorder:
         # 等待音频线程结束
         if hasattr(self, 'audio_thread') and self.audio_thread:
             self.audio_thread.join(timeout=2)
+        
+        # 记录录制结束时间（用于音频时长计算）
+        if hasattr(self, '_master_clock_start'):
+            self._master_clock_end = time.perf_counter()
+            print(f"[录制] 主时钟时长: {self._master_clock_end - self._master_clock_start:.2f}秒")
 
         # 关闭缩略功能区
         self.close_mini_control()
@@ -3827,36 +3832,67 @@ class ScreenRecorder:
             print("[音频] 没有音频数据")
             return
 
+        if not hasattr(self, '_master_clock_start') or not hasattr(self, '_master_clock_end'):
+            print("[音频] 缺少主时钟时间戳，使用旧方法")
+            self._rebuild_audio_legacy()
+            return
+
         sample_rate = self._audio_rate
         channels = self._audio_channels
         chunk_size = self._audio_chunk
 
-        bytes_per_sample = 2
+        bytes_per_sample = 2  # 16-bit
         bytes_per_frame = bytes_per_sample * channels
-        bytes_per_chunk = chunk_size * bytes_per_frame
-
+        
+        # 使用录制的主时钟时长作为音频缓冲区长度
+        total_duration = self._master_clock_end - self._master_clock_start
+        total_samples = int(total_duration * sample_rate)
+        buffer_length = total_samples * bytes_per_frame
+        
         print(f"[音频] 参数: 采样率={sample_rate}, 通道={channels}, chunk={chunk_size}")
-        print(f"[音频] 字节: 每采样={bytes_per_sample}, 每帧={bytes_per_frame}")
+        print(f"[音频] 录制时长: {total_duration:.2f}秒, 总采样数: {total_samples}")
+        print(f"[音频] 缓冲区长度: {buffer_length}字节")
         
-        # 1. 精确计算开头需要补多少静音（四舍五入）
+        # 创建缓冲区（自动初始化为零，即静音）
+        pcm_buffer = bytearray(buffer_length)
+        
+        # 获取音频块数量和预期帧数
+        actual_frames = len(self._audio_chunks_with_pts)
+        expected_frames = int(total_duration * sample_rate / chunk_size)
+        print(f"[音频] 实际音频块数: {actual_frames}, 预期帧数: {expected_frames}")
+        
+        if actual_frames < expected_frames * 0.5:
+            print(f"[音频] 警告：音频丢帧严重！仅采集到 {actual_frames} / {expected_frames} 帧")
+        
+        # 将音频块写入正确的位置
         first_pts = self._audio_chunks_with_pts[0][0]
-        silence_start_samples = 0
-        if first_pts > 0:
-            silence_start_samples = max(0, round(first_pts * sample_rate))
-            print(f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_start_samples}采样 (精确四舍五入)")
+        print(f"[音频] 第一帧PTS: {first_pts:.4f}秒")
         
-        # 2. 顺序拼接所有音频块
-        pcm_buffer = bytearray()
         for pts, chunk_data in self._audio_chunks_with_pts:
-            pcm_buffer.extend(chunk_data)
+            # 计算这个音频块应该放在缓冲区的哪个位置
+            start_sample = int(round((pts - self._master_clock_start) * sample_rate))
+            start_byte = start_sample * bytes_per_frame
+            end_byte = start_byte + len(chunk_data)
+            
+            if start_byte < 0:
+                # PTS在录制开始之前，跳过
+                continue
+            if start_byte >= len(pcm_buffer):
+                # PTS超出录制时长，跳过
+                continue
+                
+            # 确保不溢出
+            if end_byte > len(pcm_buffer):
+                chunk_data = chunk_data[:len(pcm_buffer) - start_byte]
+                end_byte = len(pcm_buffer)
+            
+            # 将数据写入缓冲区
+            pcm_buffer[start_byte:end_byte] = chunk_data
         
-        # 3. 构建静音段
-        silence = bytearray(silence_start_samples * bytes_per_frame)
-        
-        # 4. 对音频开头做200个采样的线性淡入（约4ms），消除阶跃杂音
+        # 对音频开头做200个采样的线性淡入（约4ms），消除阶跃杂音
         import struct
-        fade_len = min(200, len(pcm_buffer) // bytes_per_frame)
-        if fade_len > 0:
+        fade_len = min(200, total_samples)
+        if fade_len > 0 and len(pcm_buffer) >= fade_len * bytes_per_frame:
             print(f"[音频] 开头淡入处理: {fade_len}采样")
             for i in range(fade_len):
                 idx = i * bytes_per_frame
@@ -3870,6 +3906,68 @@ class ScreenRecorder:
                 # 覆盖缓冲区中的这两个采样
                 struct.pack_into('<hh', pcm_buffer, idx, left, right)
         
+        # 按 chunk_size 切分成帧
+        bytes_per_chunk = chunk_size * bytes_per_frame
+        final_frames = []
+        for i in range(0, len(pcm_buffer), bytes_per_chunk):
+            chunk = pcm_buffer[i:i + bytes_per_chunk]
+            if len(chunk) < bytes_per_chunk:
+                chunk = chunk + b'\x00' * (bytes_per_chunk - len(chunk))
+            final_frames.append(chunk)
+
+        print(f"[音频] 重建完成，共 {len(final_frames)} 帧")
+        print(f"[音频] 音频时长: {len(final_frames) * chunk_size / sample_rate:.2f}秒")
+
+        self.save_audio_file(final_frames, self.audio_file, channels,
+                            sample_rate, self._audio_format, self._audio)
+    
+    def _rebuild_audio_legacy(self):
+        """旧的音频重建方法（兼容模式）"""
+        print("[音频] 使用旧方法重建音频...")
+        
+        if not hasattr(self, '_audio_chunks_with_pts') or not self._audio_chunks_with_pts:
+            print("[音频] 没有音频数据")
+            return
+
+        sample_rate = self._audio_rate
+        channels = self._audio_channels
+        chunk_size = self._audio_chunk
+
+        bytes_per_sample = 2
+        bytes_per_frame = bytes_per_sample * channels
+        bytes_per_chunk = chunk_size * bytes_per_frame
+
+        print(f"[音频] 参数: 采样率={sample_rate}, 通道={channels}, chunk={chunk_size}")
+        
+        # 1. 精确计算开头需要补多少静音（四舍五入）
+        first_pts = self._audio_chunks_with_pts[0][0]
+        silence_start_samples = 0
+        if first_pts > 0:
+            silence_start_samples = max(0, round(first_pts * sample_rate))
+            print(f"[音频] 第一帧PTS: {first_pts:.4f}s, 补静音: {silence_start_samples}采样")
+        
+        # 2. 顺序拼接所有音频块
+        pcm_buffer = bytearray()
+        for pts, chunk_data in self._audio_chunks_with_pts:
+            pcm_buffer.extend(chunk_data)
+        
+        # 3. 构建静音段
+        silence = bytearray(silence_start_samples * bytes_per_frame)
+        
+        # 4. 对音频开头做200个采样的线性淡入
+        import struct
+        fade_len = min(200, len(pcm_buffer) // bytes_per_frame)
+        if fade_len > 0:
+            print(f"[音频] 开头淡入处理: {fade_len}采样")
+            for i in range(fade_len):
+                idx = i * bytes_per_frame
+                left = struct.unpack_from('<h', pcm_buffer, idx)[0]
+                right = struct.unpack_from('<h', pcm_buffer, idx + 2)[0]
+                factor = i / fade_len
+                left = int(left * factor)
+                right = int(right * factor)
+                struct.pack_into('<hh', pcm_buffer, idx, left, right)
+        
         # 5. 拼接静音和音频
         final_pcm = bytes(silence) + bytes(pcm_buffer)
         
@@ -3881,8 +3979,7 @@ class ScreenRecorder:
                 chunk = chunk + b'\x00' * (bytes_per_chunk - len(chunk))
             final_frames.append(chunk)
 
-        print(f"[音频] 拼接完成，总帧数: {len(final_frames)}, 静音开头: {len(silence)//bytes_per_frame}帧")
-        print(f"[音频] 实际音频长度: {len(pcm_buffer)//bytes_per_frame}帧")
+        print(f"[音频] 拼接完成，总帧数: {len(final_frames)}")
 
         self.save_audio_file(final_frames, self.audio_file, channels,
                             sample_rate, self._audio_format, self._audio)
